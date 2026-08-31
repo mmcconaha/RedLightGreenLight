@@ -32,6 +32,14 @@ export default function RespondPage({ params }: { params: { id: string } }) {
   const [confirmedStartUtc, setConfirmedStartUtc] = useState<string | null>(null);
   const [confirmedEndUtc, setConfirmedEndUtc] = useState<string | null>(null);
 
+  const [appleConnected, setAppleConnected] = useState(false);
+  const [appleEmailDisplay, setAppleEmailDisplay] = useState("");
+  const [showAppleForm, setShowAppleForm] = useState(false);
+  const [appleEmailInput, setAppleEmailInput] = useState("");
+  const [applePasswordInput, setApplePasswordInput] = useState("");
+  const [appleBusy, setAppleBusy] = useState(false);
+  const [appleMsg, setAppleMsg] = useState<string | null>(null);
+
   const loadExisting = async (memberIdArg: string, dateList: string[]) => {
     const { data: existing } = await supabase
       .from("availability")
@@ -110,6 +118,7 @@ export default function RespondPage({ params }: { params: { id: string } }) {
           setMemberName(member.name);
           await loadExisting(member.id, d);
           await loadNotes(member.id, d);
+          await checkAppleStatus(member.id);
         }
       }
 
@@ -159,6 +168,93 @@ export default function RespondPage({ params }: { params: { id: string } }) {
     setMemberName(member.name);
     await loadExisting(member.id, dates);
     await loadNotes(member.id, dates);
+    await checkAppleStatus(member.id);
+  };
+
+  const checkAppleStatus = async (memberIdArg: string) => {
+    try {
+      const res = await fetch(`/api/apple/status?memberId=${memberIdArg}`);
+      const json = await res.json();
+      setAppleConnected(!!json.connected);
+      setAppleEmailDisplay(json.appleEmail || "");
+    } catch {
+      // Non-fatal — Apple section just stays in its "not connected" state.
+    }
+  };
+
+  const connectApple = async () => {
+    if (!memberId) return;
+    setAppleMsg(null);
+    if (!appleEmailInput || !applePasswordInput) {
+      setAppleMsg("Enter your Apple ID email and an app-specific password.");
+      return;
+    }
+    setAppleBusy(true);
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    try {
+      const res = await fetch("/api/apple/connect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          memberId,
+          appleEmail: appleEmailInput,
+          appSpecificPassword: applePasswordInput,
+          sessionId: params.id,
+          tz,
+        }),
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        setAppleMsg(json.error || "Couldn't connect Apple Calendar.");
+        setAppleBusy(false);
+        return;
+      }
+      setAppleConnected(true);
+      setAppleEmailDisplay(appleEmailInput);
+      setApplePasswordInput("");
+      setShowAppleForm(false);
+      if (json.sync?.ok) {
+        setJustSynced(
+          `Synced — Apple Calendar returned ${json.sync.events ?? "?"} events, ${json.sync.rows ?? "some"} time slots marked red below.`
+        );
+        await loadExisting(memberId, dates);
+        await loadNotes(memberId, dates);
+      } else if (json.sync?.error) {
+        setAppleMsg(`Connected, but the first sync failed: ${json.sync.error}`);
+      }
+    } catch (e: any) {
+      setAppleMsg(e?.message || "Couldn't connect Apple Calendar.");
+    } finally {
+      setAppleBusy(false);
+    }
+  };
+
+  const syncApple = async () => {
+    if (!memberId) return;
+    setAppleBusy(true);
+    setAppleMsg(null);
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    try {
+      const res = await fetch(`/api/session/${params.id}/apple-sync`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ memberId, tz }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        setJustSynced(
+          `Synced — Apple Calendar returned ${json.events ?? "?"} events, ${json.rows ?? "some"} time slots marked red below.`
+        );
+        await loadExisting(memberId, dates);
+        await loadNotes(memberId, dates);
+      } else {
+        setAppleMsg(json.error || "Sync failed.");
+      }
+    } catch (e: any) {
+      setAppleMsg(e?.message || "Sync failed.");
+    } finally {
+      setAppleBusy(false);
+    }
   };
 
   const connectGoogle = () => {
@@ -358,6 +454,99 @@ export default function RespondPage({ params }: { params: { id: string } }) {
             >
               📅 Auto-fill from Google Calendar
             </button>
+
+            {appleConnected ? (
+              <div className="mb-4">
+                <button
+                  onClick={syncApple}
+                  disabled={appleBusy}
+                  className="w-full py-2.5 rounded-lg border text-sm font-bold"
+                  style={{ borderColor: "#2C2F38", background: "#1C1E24", color: "#C7C9D1" }}
+                >
+                  {appleBusy ? "Syncing…" : ` Sync Apple Calendar (${appleEmailDisplay})`}
+                </button>
+                <button
+                  onClick={() => setShowAppleForm(!showAppleForm)}
+                  className="text-xs font-bold text-gray-500 mt-1.5"
+                >
+                  Use a different Apple ID
+                </button>
+                {showAppleForm && (
+                  <div className="mt-2 bg-[#1C1E24] border border-[#2C2F38] rounded-lg p-3">
+                    <input
+                      value={appleEmailInput}
+                      onChange={(e) => setAppleEmailInput(e.target.value)}
+                      placeholder="Apple ID email"
+                      className="w-full box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm mb-2 outline-none"
+                    />
+                    <input
+                      value={applePasswordInput}
+                      onChange={(e) => setApplePasswordInput(e.target.value)}
+                      type="password"
+                      placeholder="App-specific password"
+                      className="w-full box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm mb-2 outline-none"
+                    />
+                    <button
+                      onClick={connectApple}
+                      disabled={appleBusy}
+                      className="w-full py-2 rounded-lg text-sm font-bold"
+                      style={{ background: "#35D07F", color: "#0E1712" }}
+                    >
+                      {appleBusy ? "Connecting…" : "Connect"}
+                    </button>
+                  </div>
+                )}
+                {appleMsg && <p className="text-xs text-gray-400 mt-2">{appleMsg}</p>}
+              </div>
+            ) : (
+              <div className="mb-4">
+                <button
+                  onClick={() => setShowAppleForm(!showAppleForm)}
+                  className="w-full py-2.5 rounded-lg border text-sm font-bold"
+                  style={{ borderColor: "#2C2F38", background: "#1C1E24", color: "#C7C9D1" }}
+                >
+                  🍎 Auto-fill from Apple Calendar
+                </button>
+                {showAppleForm && (
+                  <div className="mt-2 bg-[#1C1E24] border border-[#2C2F38] rounded-lg p-3">
+                    <p className="text-xs text-gray-400 mb-2">
+                      Use an{" "}
+                      <a
+                        href="https://support.apple.com/en-us/102654"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        app-specific password
+                      </a>{" "}
+                      — not your real Apple ID password. Apple won't accept your real one here anyway.
+                    </p>
+                    <input
+                      value={appleEmailInput}
+                      onChange={(e) => setAppleEmailInput(e.target.value)}
+                      placeholder="Apple ID email"
+                      className="w-full box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm mb-2 outline-none"
+                    />
+                    <input
+                      value={applePasswordInput}
+                      onChange={(e) => setApplePasswordInput(e.target.value)}
+                      type="password"
+                      placeholder="App-specific password"
+                      className="w-full box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm mb-2 outline-none"
+                    />
+                    <button
+                      onClick={connectApple}
+                      disabled={appleBusy}
+                      className="w-full py-2 rounded-lg text-sm font-bold"
+                      style={{ background: "#35D07F", color: "#0E1712" }}
+                    >
+                      {appleBusy ? "Connecting…" : "Connect"}
+                    </button>
+                    {appleMsg && <p className="text-xs text-gray-400 mt-2">{appleMsg}</p>}
+                  </div>
+                )}
+              </div>
+            )}
 
             <InteractivePaintCalendar
               startDate={startDate}
