@@ -24,6 +24,9 @@ export default function DashboardPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotMsg, setForgotMsg] = useState("");
 
   const [ledBands, setLedBands] = useState<BandGroup[]>([]);
   const [memberBands, setMemberBands] = useState<BandGroup[]>([]);
@@ -101,6 +104,22 @@ export default function DashboardPage() {
     await loadDashboard(data.user.id);
   };
 
+  const sendPasswordReset = async () => {
+    setForgotMsg("");
+    if (!forgotEmail) {
+      setForgotMsg("Enter your email first.");
+      return;
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) {
+      setForgotMsg(error.message);
+    } else {
+      setForgotMsg("Check your email for a reset link.");
+    }
+  };
+
   const logout = async () => {
     await supabase.auth.signOut();
     setUserId(null);
@@ -162,6 +181,31 @@ export default function DashboardPage() {
             >
               Log in
             </button>
+
+            <button
+              onClick={() => setShowForgotPassword(!showForgotPassword)}
+              className="text-xs font-bold text-gray-400 mt-3"
+            >
+              {showForgotPassword ? "Cancel" : "Forgot password?"}
+            </button>
+            {showForgotPassword && (
+              <div className="mt-2">
+                <input
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="Email"
+                  className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm mb-2 outline-none"
+                />
+                <button
+                  onClick={sendPasswordReset}
+                  className="w-full py-2 rounded-lg text-sm font-bold"
+                  style={{ background: "#1C1E24", color: "#F2F1EA", border: "1px solid #2C2F38" }}
+                >
+                  Send reset link
+                </button>
+                {forgotMsg && <p className="text-xs text-gray-400 mt-2">{forgotMsg}</p>}
+              </div>
+            )}
           </div>
         ) : loadingData ? (
           <p className="text-sm text-gray-400">Loading…</p>
