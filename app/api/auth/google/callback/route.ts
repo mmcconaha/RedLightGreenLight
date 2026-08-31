@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { exchangeCode, fetchEvents, eventsForRange, zonedTimeToUtc } from "@/lib/google";
+import { exchangeCode, exchangeCodeForTokens, fetchEvents, eventsForRange, zonedTimeToUtc } from "@/lib/google";
+import { connectGoogle } from "@/lib/myCalendar";
 import { supabase } from "@/lib/supabase";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { dateRangeFiltered } from "@/lib/dates";
@@ -20,6 +21,44 @@ export async function GET(req: Request) {
     }
 
     const parsedState = JSON.parse(Buffer.from(stateRaw, "base64url").toString());
+
+    // The unified "My Calendar" connect flow (lib/myCalendar.ts) shares
+    // this SAME registered Google redirect URI as the per-session sync
+    // below -- Google OAuth clients only allow a fixed set of redirect
+    // URIs, so rather than registering a second one, this callback
+    // branches on state.mode to tell the two flows apart. My Calendar
+    // needs a refresh_token stored against the user; it never touches any
+    // specific session's availability.
+    if (parsedState.mode === "my-calendar") {
+      const userId: string = parsedState.userId;
+      try {
+        const tokens = await exchangeCodeForTokens(code);
+        if (!tokens.refreshToken) {
+          // Google only issues a refresh_token on first consent for this
+          // client+user combination -- if this person had previously
+          // connected and later revoked RLGL's access outside the app,
+          // Google can silently omit it here on a re-consent.
+          return NextResponse.redirect(
+            new URL(
+              `/my-calendar?google_error=${encodeURIComponent(
+                "Google didn't return a refresh token. Revoke RLGL's access at myaccount.google.com/permissions, then try connecting again."
+              )}`,
+              url.origin
+            )
+          );
+        }
+        await connectGoogle(userId, tokens.refreshToken, tokens.accessToken);
+        return NextResponse.redirect(new URL(`/my-calendar?connected=google`, url.origin));
+      } catch (e: any) {
+        return NextResponse.redirect(
+          new URL(
+            `/my-calendar?google_error=${encodeURIComponent(e?.message || "connect failed")}`,
+            url.origin
+          )
+        );
+      }
+    }
+
     sessionId = parsedState.sessionId;
     const memberId: string = parsedState.memberId;
     const tz: string = parsedState.tz;
@@ -61,7 +100,7 @@ export async function GET(req: Request) {
     }
 
     // Dates from Supabase should already be plain "YYYY-MM-DD" strings, but
-    // guard this explicitly — this exact spot was previously unprotected
+    // guard this explicitly -- this exact spot was previously unprotected
     // and could throw "Invalid time value" straight past every other
     // safety net in this file.
     let timeMin: string;

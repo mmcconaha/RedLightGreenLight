@@ -213,10 +213,18 @@ export default function DashboardPage() {
           <>
             <a
               href="/create"
-              className="block w-full text-center py-2.5 rounded-lg text-sm font-bold mb-5"
+              className="block w-full text-center py-2.5 rounded-lg text-sm font-bold mb-3"
               style={{ background: "#35D07F", color: "#0E1712" }}
             >
               + New session
+            </a>
+
+            <a
+              href="/my-calendar"
+              className="block w-full text-center py-2.5 rounded-lg text-sm font-bold mb-5"
+              style={{ background: "#1C1E24", color: "#F2F1EA", border: "1px solid #2C2F38" }}
+            >
+              🗓️ My Calendar
             </a>
 
             <div className="bg-[#1C1E24] border border-[#2C2F38] rounded-xl p-3.5 mb-7">
