@@ -207,7 +207,7 @@ export default function MyCalendarPage() {
 
   return (
     <main className="min-h-screen px-4 py-8" style={{ background: BG, color: TEXT }}>
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <div className="flex gap-2 mb-2">
           <div className="w-2.5 h-2.5 rounded-full" style={{ background: RED }} />
           <div className="w-2.5 h-2.5 rounded-full" style={{ background: YELLOW }} />
@@ -367,12 +367,12 @@ export default function MyCalendarPage() {
             </button>
 
             {/* Month grid -- big color blocks */}
-            <div className="grid grid-cols-7 gap-1.5 mb-2">
+            <div className="grid grid-cols-7 gap-2 mb-2">
               {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-                <div key={i} className="text-center text-[11px] text-gray-500 font-bold">{d}</div>
+                <div key={i} className="text-center text-sm text-gray-500 font-bold">{d}</div>
               ))}
             </div>
-            <div className="grid grid-cols-7 gap-1.5">
+            <div className="grid grid-cols-7 gap-2">
               {grid.flat().map((dateISO, i) => {
                 if (!dateISO) return <div key={i} />;
                 const day = monthData[dateISO];
@@ -392,7 +392,7 @@ export default function MyCalendarPage() {
                     style={{
                       background: dayBg(day),
                       color: dayTextColor(day),
-                      minHeight: "88px",
+                      minHeight: "128px",
                       border: isSelected
                         ? `2px solid ${TEXT}`
                         : isToday
@@ -402,23 +402,23 @@ export default function MyCalendarPage() {
                         : `1px solid ${BORDER}`,
                     }}
                   >
-                    <span className="text-xs font-black mb-1">{Number(dateISO.slice(8, 10))}</span>
+                    <span className="text-lg font-black mb-1">{Number(dateISO.slice(8, 10))}</span>
                     <div className="flex flex-col gap-0.5 w-full">
                       {shownItems.map((item, idx) => (
                         <div
                           key={idx}
-                          className="flex items-center gap-1 text-[10px] leading-tight rounded px-1 py-0.5 w-full"
+                          className="flex items-center gap-1.5 text-sm leading-tight rounded px-1.5 py-1 w-full"
                           style={{ background: "rgba(0,0,0,0.35)", color: "#F2F1EA" }}
                         >
                           <span
-                            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                            className="w-2 h-2 rounded-full flex-shrink-0"
                             style={{ background: item.color }}
                           />
                           <span className="truncate">{item.title}</span>
                         </div>
                       ))}
                       {extraCount > 0 && (
-                        <div className="text-[10px] opacity-70 px-1">+{extraCount} more</div>
+                        <div className="text-xs opacity-70 px-1.5">+{extraCount} more</div>
                       )}
                     </div>
                   </button>
