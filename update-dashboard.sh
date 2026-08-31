@@ -1,0 +1,705 @@
+#!/bin/bash
+set -e
+echo "Writing organizer page (with greeting)..."
+cat > "app/session/[id]/organizer/page.tsx" << 'ORG_EOF'
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { dateRangeFiltered, formatFullDate } from "@/lib/dates";
+import { InteractivePaintCalendar, SummaryPaintCalendar, BlockDef, SIMPLE_BLOCKS, cellKey } from "@/components/Calendar";
+import { Status } from "@/lib/types";
+import { zonedTimeToUtc } from "@/lib/google";
+import { downloadIcs } from "@/lib/ics";
+import { Bulletin } from "@/components/Bulletin";
+import { FileShare } from "@/components/FileShare";
+
+interface Suggestion {
+  date: string;
+  block: number;
+  blurb: string;
+}
+
+function formatHour(h: number): string {
+  const period = h < 12 ? "AM" : "PM";
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12}:00 ${period}`;
+}
+
+export default function OrganizerPage({ params }: { params: { id: string } }) {
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [authorized, setAuthorized] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [ownerName, setOwnerName] = useState("Organizer");
+
+  const [sessionTitle, setSessionTitle] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [blocks, setBlocks] = useState<BlockDef[]>([]);
+  const [dates, setDates] = useState<string[]>([]);
+  const [counts, setCounts] = useState<Record<string, { green: number; yellow: number; red: number }>>({});
+  const [total, setTotal] = useState(0);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
+  const [memberStatuses, setMemberStatuses] = useState<Record<string, Record<string, Status>>>({});
+  const [expandedMember, setExpandedMember] = useState<string | null>(null);
+
+  const [confirmedTitle, setConfirmedTitle] = useState<string | null>(null);
+  const [confirmedStartUtc, setConfirmedStartUtc] = useState<string | null>(null);
+  const [confirmedEndUtc, setConfirmedEndUtc] = useState<string | null>(null);
+
+  const [pickDate, setPickDate] = useState("");
+  const [pickStartHour, setPickStartHour] = useState(18);
+  const [pickEndHour, setPickEndHour] = useState(21);
+  const [pickTitle, setPickTitle] = useState("");
+  const [confirming, setConfirming] = useState(false);
+
+  const checkOwnership = async (userId: string, bandId: string) => {
+    const { data: band } = await supabase
+      .from("bands")
+      .select("id")
+      .eq("id", bandId)
+      .eq("owner_id", userId)
+      .single();
+    return !!band;
+  };
+
+  const loadSessionData = async (bandId: string, userId: string) => {
+    const { data: session, error: sessionError } = await supabase
+      .from("sessions")
+      .select("title, start_date, end_date, blocks, active_weekdays, confirmed_title, confirmed_start_utc, confirmed_end_utc")
+      .eq("id", params.id)
+      .single();
+
+    if (sessionError || !session?.start_date || !session?.end_date) {
+      setLoadError("This session doesn't have a date range set up yet.");
+      setLoading(false);
+      return;
+    }
+
+    setSessionTitle(session.title ?? "");
+    setPickTitle(session.title ?? "");
+    setStartDate(session.start_date);
+    setEndDate(session.end_date);
+    setConfirmedTitle(session.confirmed_title ?? null);
+    setConfirmedStartUtc(session.confirmed_start_utc ?? null);
+    setConfirmedEndUtc(session.confirmed_end_utc ?? null);
+
+    const rawBlocks = session.blocks;
+    const isValid =
+      Array.isArray(rawBlocks) &&
+      rawBlocks.length > 0 &&
+      rawBlocks.every(
+        (x: any) => x && typeof x.label === "string" && typeof x.start_hour === "number" && typeof x.end_hour === "number"
+      );
+    const sessionBlocks: BlockDef[] = isValid ? rawBlocks : SIMPLE_BLOCKS;
+    setBlocks(sessionBlocks);
+    const activeWeekdays: number[] = session.active_weekdays ?? [0, 1, 2, 3, 4, 5, 6];
+    const d = dateRangeFiltered(session.start_date, session.end_date, activeWeekdays);
+    setDates(d);
+    if (d.length > 0) setPickDate(d[0]);
+
+    const res = await fetch(`/api/session/${params.id}/suggest`);
+    const json = await res.json();
+
+    const grouped: Record<string, { green: number; yellow: number; red: number }> = {};
+    let max = 0;
+    (json.allCounts ?? []).forEach((c: any) => {
+      const date = d[c.day_index];
+      if (date) {
+        grouped[cellKey(date, c.block_index)] = c;
+        max = Math.max(max, c.responded);
+      }
+    });
+    setCounts(grouped);
+    setTotal(max);
+    setSuggestions(
+      (json.suggestions ?? []).map((s: any) => ({
+        date: d[s.day_index],
+        block: s.block_index,
+        blurb: s.blurb,
+      }))
+    );
+
+    // Individual responses — allowed by RLS for the band owner only.
+    // Only colors are ever fetched here, never private_notes (event reasons).
+    const { data: bandMembers } = await supabase
+      .from("members")
+      .select("id, name")
+      .eq("band_id", bandId);
+    setMembers(bandMembers ?? []);
+
+    const { data: selfMember } = await supabase
+      .from("members")
+      .select("name")
+      .eq("band_id", bandId)
+      .eq("user_id", userId)
+      .single();
+    if (selfMember?.name) setOwnerName(selfMember.name);
+
+    const { data: allAvailability } = await supabase
+      .from("availability")
+      .select("member_id, day_index, block_index, status")
+      .eq("session_id", params.id);
+
+    const perMember: Record<string, Record<string, Status>> = {};
+    (allAvailability ?? []).forEach((row: any) => {
+      const date = d[row.day_index];
+      if (!date) return;
+      if (!perMember[row.member_id]) perMember[row.member_id] = {};
+      perMember[row.member_id][cellKey(date, row.block_index)] = row.status as Status;
+    });
+    setMemberStatuses(perMember);
+
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    const init = async () => {
+      const { data: session } = await supabase
+        .from("sessions")
+        .select("band_id")
+        .eq("id", params.id)
+        .single();
+
+      if (!session?.band_id) {
+        setAuthError("This session doesn't exist.");
+        setCheckingAuth(false);
+        return;
+      }
+
+      const { data: authData } = await supabase.auth.getSession();
+      if (authData.session) {
+        const owns = await checkOwnership(authData.session.user.id, session.band_id);
+        if (owns) {
+          setAuthorized(true);
+          await loadSessionData(session.band_id, authData.session.user.id);
+        } else {
+          setAuthError("You're not the organizer for this band's sessions.");
+        }
+      }
+      setCheckingAuth(false);
+    };
+    init();
+  }, [params.id]);
+
+  const login = async () => {
+    setLoginError("");
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data.user) {
+      setLoginError("Couldn't log in — check your email/password.");
+      return;
+    }
+    const { data: session } = await supabase
+      .from("sessions")
+      .select("band_id")
+      .eq("id", params.id)
+      .single();
+    if (!session?.band_id) {
+      setAuthError("This session doesn't exist.");
+      return;
+    }
+    const owns = await checkOwnership(data.user.id, session.band_id);
+    if (!owns) {
+      setAuthError("You're not the organizer for this band's sessions.");
+      return;
+    }
+    setAuthorized(true);
+    setLoading(true);
+    await loadSessionData(session.band_id, data.user.id);
+  };
+
+  const confirmSession = async () => {
+    if (!pickDate || !pickTitle.trim()) return;
+    setConfirming(true);
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const startUtc = zonedTimeToUtc(pickDate, pickStartHour, tz).toISOString();
+    const endUtc = zonedTimeToUtc(pickDate, pickEndHour, tz).toISOString();
+
+    const { error } = await supabase
+      .from("sessions")
+      .update({
+        confirmed_title: pickTitle.trim(),
+        confirmed_start_utc: startUtc,
+        confirmed_end_utc: endUtc,
+      })
+      .eq("id", params.id);
+
+    setConfirming(false);
+    if (!error) {
+      setConfirmedTitle(pickTitle.trim());
+      setConfirmedStartUtc(startUtc);
+      setConfirmedEndUtc(endUtc);
+    }
+  };
+
+  return (
+    <main className="min-h-screen bg-[#14151A] text-[#F2F1EA] px-4 py-8">
+      <div className="max-w-xl mx-auto">
+        <h1 className="text-2xl font-black uppercase mb-1">Group view</h1>
+        <p className="text-sm text-gray-400 mb-6">
+          Darker green = more people free. Nobody's individual answer is shown here.
+        </p>
+
+        {checkingAuth ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : !authorized ? (
+          <div>
+            {authError && <p className="text-[#FF5A5F] text-sm mb-3">{authError}</p>}
+            <p className="text-sm text-gray-400 mb-3">Log in as the organizer to see this.</p>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email"
+              className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] mb-3 outline-none"
+            />
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              placeholder="Password"
+              className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] mb-3 outline-none"
+            />
+            {loginError && <p className="text-[#FF5A5F] text-xs mb-3">{loginError}</p>}
+            <button
+              onClick={login}
+              className="w-full py-3 rounded-xl font-bold text-[15px]"
+              style={{ background: "#35D07F", color: "#0E1712" }}
+            >
+              Log in
+            </button>
+          </div>
+        ) : loadError ? (
+          <p className="text-[#FF5A5F] text-sm">{loadError}</p>
+        ) : loading ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : (
+          <>
+            <h2 className="text-sm text-gray-400 mb-4">Welcome, {ownerName}</h2>
+            <Bulletin sessionId={params.id} authorName={ownerName} />
+            <FileShare sessionId={params.id} canUpload />
+
+            {confirmedTitle && confirmedStartUtc && confirmedEndUtc && (
+              <div className="bg-[#1C2A22] border border-[#35D07F] rounded-xl p-3.5 mb-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-[#35D07F] mb-1">
+                  Confirmed
+                </div>
+                <div className="font-bold text-sm mb-0.5">{confirmedTitle}</div>
+                <div className="text-xs text-gray-300 mb-3">
+                  {new Date(confirmedStartUtc).toLocaleString("en-US", {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}{" "}
+                  –{" "}
+                  {new Date(confirmedEndUtc).toLocaleString("en-US", { hour: "numeric", minute: "2-digit" })}
+                </div>
+                <button
+                  onClick={() =>
+                    downloadIcs(
+                      `${confirmedTitle}.ics`,
+                      confirmedTitle,
+                      confirmedStartUtc,
+                      confirmedEndUtc
+                    )
+                  }
+                  className="w-full py-2 rounded-lg text-sm font-bold"
+                  style={{ background: "#35D07F", color: "#0E1712" }}
+                >
+                  Download calendar invite (.ics)
+                </button>
+              </div>
+            )}
+
+            <div className="mb-7">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
+                Suggested windows
+              </div>
+              {suggestions.length === 0 ? (
+                <p className="text-sm text-gray-400">No clean windows yet — need a few more responses.</p>
+              ) : (
+                suggestions.map((s) => (
+                  <div
+                    key={`${s.date}-${s.block}`}
+                    className="bg-[#1C1E24] border border-[#2C2F38] rounded-xl px-3.5 py-3 mb-2 flex justify-between items-center"
+                  >
+                    <div>
+                      <div className="font-bold text-sm">
+                        {formatFullDate(s.date)} — {blocks[s.block]?.label ?? ""}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">{s.blurb}</div>
+                    </div>
+                    <div
+                      className="rounded-full flex-shrink-0"
+                      style={{ width: 26, height: 26, background: "#35D07F", boxShadow: "0 0 10px #35D07F88" }}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="bg-[#1C1E24] border border-[#2C2F38] rounded-xl p-3.5 mb-7">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
+                Finalize a date
+              </div>
+              <select
+                value={pickDate}
+                onChange={(e) => setPickDate(e.target.value)}
+                className="w-full box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm outline-none mb-2"
+              >
+                {dates.map((d) => (
+                  <option key={d} value={d}>
+                    {formatFullDate(d)}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-2 mb-2">
+                <select
+                  value={pickStartHour}
+                  onChange={(e) => setPickStartHour(Number(e.target.value))}
+                  className="flex-1 bg-[#14151A] border border-[#2C2F38] rounded-lg px-2 py-2 text-sm outline-none"
+                >
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <option key={h} value={h}>
+                      {formatHour(h)}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-gray-500 text-xs self-center">to</span>
+                <select
+                  value={pickEndHour}
+                  onChange={(e) => setPickEndHour(Number(e.target.value))}
+                  className="flex-1 bg-[#14151A] border border-[#2C2F38] rounded-lg px-2 py-2 text-sm outline-none"
+                >
+                  {Array.from({ length: 24 }, (_, h) => h + 1).map((h) => (
+                    <option key={h} value={h}>
+                      {formatHour(h)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <input
+                value={pickTitle}
+                onChange={(e) => setPickTitle(e.target.value)}
+                placeholder="Event title"
+                className="w-full box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm outline-none mb-3"
+              />
+              <button
+                onClick={confirmSession}
+                disabled={confirming || !pickDate || !pickTitle.trim()}
+                className="w-full py-2.5 rounded-lg text-sm font-bold"
+                style={{ background: "#35D07F", color: "#0E1712" }}
+              >
+                {confirming ? "Confirming…" : "Confirm this session"}
+              </button>
+            </div>
+
+            <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1.5">Calendar</div>
+            <SummaryPaintCalendar startDate={startDate} endDate={endDate} dates={dates} blocks={blocks} counts={counts} total={total} />
+
+            {members.length > 0 && (
+              <div className="mt-8">
+                <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1.5">
+                  Individual responses
+                </div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Colors only — nobody's reasons are ever visible here, only to them.
+                </p>
+                {members.map((m) => {
+                  const isOpen = expandedMember === m.id;
+                  const hasResponded = !!memberStatuses[m.id] && Object.keys(memberStatuses[m.id]).length > 0;
+                  return (
+                    <div key={m.id} className="mb-2">
+                      <button
+                        onClick={() => setExpandedMember(isOpen ? null : m.id)}
+                        className="w-full flex justify-between items-center px-3.5 py-2.5 rounded-lg border text-sm"
+                        style={{ borderColor: "#2C2F38", background: "#1C1E24", color: "#F2F1EA" }}
+                      >
+                        <span className="font-bold">{m.name}</span>
+                        <span className="text-xs text-gray-500">
+                          {hasResponded ? (isOpen ? "Hide ▲" : "View ▼") : "No response yet"}
+                        </span>
+                      </button>
+                      {isOpen && hasResponded && (
+                        <div className="mt-2 pl-1">
+                          <InteractivePaintCalendar
+                            startDate={startDate}
+                            endDate={endDate}
+                            dates={dates}
+                            blocks={blocks}
+                            statuses={memberStatuses[m.id]}
+                            onPaint={() => {}}
+                            readOnly
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </main>
+  );
+}
+ORG_EOF
+echo "Writing dashboard page..."
+mkdir -p app/dashboard
+cat > "app/dashboard/page.tsx" << 'DASH_EOF'
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { formatFullDate } from "@/lib/dates";
+
+interface SessionRow {
+  id: string;
+  title: string;
+  start_date: string;
+  end_date: string;
+}
+
+interface BandGroup {
+  id: string;
+  name: string;
+  sessions: SessionRow[];
+}
+
+export default function DashboardPage() {
+  const [checking, setChecking] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+
+  const [ledBands, setLedBands] = useState<BandGroup[]>([]);
+  const [memberBands, setMemberBands] = useState<BandGroup[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
+
+  const loadDashboard = async (uid: string) => {
+    setLoadingData(true);
+
+    // Bands this person owns/leads
+    const { data: owned } = await supabase.from("bands").select("id, name").eq("owner_id", uid);
+    const ledGroups: BandGroup[] = [];
+    for (const b of owned ?? []) {
+      const { data: sessions } = await supabase
+        .from("sessions")
+        .select("id, title, start_date, end_date")
+        .eq("band_id", b.id)
+        .order("start_date", { ascending: false });
+      ledGroups.push({ id: b.id, name: b.name, sessions: sessions ?? [] });
+    }
+    setLedBands(ledGroups);
+
+    // Bands this person plays in (excluding ones they also own, to avoid duplicates)
+    const { data: memberships } = await supabase
+      .from("members")
+      .select("band_id, name, bands(name)")
+      .eq("user_id", uid);
+    if (memberships && memberships.length > 0) {
+      const selfName = (memberships[0] as any)?.name;
+      if (selfName) setName(selfName);
+    }
+    const ownedIds = new Set((owned ?? []).map((b) => b.id));
+    const memberGroups: BandGroup[] = [];
+    for (const m of memberships ?? []) {
+      const bandId = (m as any).band_id;
+      if (ownedIds.has(bandId)) continue;
+      const bandName = (m as any).bands?.name ?? "Unnamed band";
+      const { data: sessions } = await supabase
+        .from("sessions")
+        .select("id, title, start_date, end_date")
+        .eq("band_id", bandId)
+        .order("start_date", { ascending: false });
+      memberGroups.push({ id: bandId, name: bandName, sessions: sessions ?? [] });
+    }
+    setMemberBands(memberGroups);
+
+    setLoadingData(false);
+  };
+
+  useEffect(() => {
+    const init = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data.session) {
+        setUserId(data.session.user.id);
+        await loadDashboard(data.session.user.id);
+      }
+      setChecking(false);
+    };
+    init();
+  }, []);
+
+  const login = async () => {
+    setLoginError("");
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data.user) {
+      setLoginError("Couldn't log in — check your email/password.");
+      return;
+    }
+    setUserId(data.user.id);
+    await loadDashboard(data.user.id);
+  };
+
+  return (
+    <main className="min-h-screen bg-[#14151A] text-[#F2F1EA] px-4 py-8">
+      <div className="max-w-xl mx-auto">
+        <div className="flex gap-2 mb-2">
+          <div className="w-2.5 h-2.5 rounded-full bg-[#FF5A5F]" />
+          <div className="w-2.5 h-2.5 rounded-full bg-[#FFC24B]" />
+          <div className="w-2.5 h-2.5 rounded-full bg-[#35D07F]" />
+        </div>
+        <h1 className="text-2xl font-black uppercase tracking-tight mb-6">
+          {name ? `Welcome, ${name}` : "Dashboard"}
+        </h1>
+
+        {checking ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : !userId ? (
+          <div>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email"
+              className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] mb-3 outline-none"
+            />
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              placeholder="Password"
+              className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] mb-3 outline-none"
+            />
+            {loginError && <p className="text-[#FF5A5F] text-xs mb-3">{loginError}</p>}
+            <button
+              onClick={login}
+              className="w-full py-3 rounded-xl font-bold text-[15px]"
+              style={{ background: "#35D07F", color: "#0E1712" }}
+            >
+              Log in
+            </button>
+          </div>
+        ) : loadingData ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : (
+          <>
+            <a
+              href="/create"
+              className="block w-full text-center py-2.5 rounded-lg text-sm font-bold mb-7"
+              style={{ background: "#35D07F", color: "#0E1712" }}
+            >
+              + New session
+            </a>
+
+            <div className="mb-8">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
+                Bands you lead
+              </div>
+              {ledBands.length === 0 ? (
+                <p className="text-xs text-gray-500">None yet — create a session to start one.</p>
+              ) : (
+                ledBands.map((b) => (
+                  <div key={b.id} className="mb-4">
+                    <div className="font-bold text-sm mb-1.5">{b.name}</div>
+                    {b.sessions.length === 0 ? (
+                      <p className="text-xs text-gray-500 pl-2">No sessions yet.</p>
+                    ) : (
+                      b.sessions.map((s) => (
+                        <a
+                          key={s.id}
+                          href={`/session/${s.id}/organizer`}
+                          className="block px-3 py-2.5 rounded-lg border text-sm mb-1.5"
+                          style={{ borderColor: "#2C2F38", background: "#1C1E24", color: "#F2F1EA" }}
+                        >
+                          <div className="font-bold">{s.title}</div>
+                          <div className="text-xs text-gray-500">
+                            {formatFullDate(s.start_date)} – {formatFullDate(s.end_date)}
+                          </div>
+                        </a>
+                      ))
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
+                Bands you play in
+              </div>
+              {memberBands.length === 0 ? (
+                <p className="text-xs text-gray-500">
+                  None yet — use an invite link from a band to join one.
+                </p>
+              ) : (
+                memberBands.map((b) => (
+                  <div key={b.id} className="mb-4">
+                    <div className="font-bold text-sm mb-1.5">{b.name}</div>
+                    {b.sessions.length === 0 ? (
+                      <p className="text-xs text-gray-500 pl-2">No sessions yet.</p>
+                    ) : (
+                      b.sessions.map((s) => (
+                        <a
+                          key={s.id}
+                          href={`/session/${s.id}/respond`}
+                          className="block px-3 py-2.5 rounded-lg border text-sm mb-1.5"
+                          style={{ borderColor: "#2C2F38", background: "#1C1E24", color: "#F2F1EA" }}
+                        >
+                          <div className="font-bold">{s.title}</div>
+                          <div className="text-xs text-gray-500">
+                            {formatFullDate(s.start_date)} – {formatFullDate(s.end_date)}
+                          </div>
+                        </a>
+                      ))
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </main>
+  );
+}
+DASH_EOF
+echo "Writing home page..."
+cat > "app/page.tsx" << 'HOME_EOF'
+export default function Home() {
+  return (
+    <main className="min-h-screen bg-[#14151A] text-[#F2F1EA] flex items-center justify-center px-4">
+      <div className="text-center max-w-md">
+        <div className="flex gap-2 justify-center mb-3">
+          <div className="w-2.5 h-2.5 rounded-full bg-[#FF5A5F]" />
+          <div className="w-2.5 h-2.5 rounded-full bg-[#FFC24B]" />
+          <div className="w-2.5 h-2.5 rounded-full bg-[#35D07F]" />
+        </div>
+        <h1 className="text-3xl font-black uppercase mb-3">Red Light Green Light</h1>
+        <p className="text-sm text-gray-400 mb-6">
+          One tap tells the band if you're free. No calendar app, no explaining, no guilt.
+        </p>
+        <a
+          href="/dashboard"
+          className="inline-block px-6 py-2.5 rounded-lg text-sm font-bold"
+          style={{ background: "#35D07F", color: "#0E1712" }}
+        >
+          Go to dashboard
+        </a>
+      </div>
+    </main>
+  );
+}
+HOME_EOF
+echo "All files updated."

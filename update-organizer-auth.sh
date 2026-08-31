@@ -1,0 +1,644 @@
+#!/bin/bash
+set -e
+echo "Writing create page..."
+cat > "app/create/page.tsx" << 'CREATE_EOF'
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { BlockDef, SIMPLE_BLOCKS, WHOLE_DAY_BLOCKS } from "@/components/Calendar";
+
+type Mode = "simple" | "whole_day" | "custom";
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function formatHour(h: number): string {
+  if (h === 24) return "12:00 AM (next day)";
+  const period = h < 12 ? "AM" : "PM";
+  let h12 = h % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12}:00 ${period}`;
+}
+
+export default function CreatePage() {
+  const [checking, setChecking] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+
+  const [bands, setBands] = useState<{ id: string; name: string }[]>([]);
+  const [bandId, setBandId] = useState<string | null>(null);
+  const [newBandName, setNewBandName] = useState("");
+  const [creatingBand, setCreatingBand] = useState(false);
+
+  const [title, setTitle] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [mode, setMode] = useState<Mode>("simple");
+  const [activeWeekdays, setActiveWeekdays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
+  const [customBlocks, setCustomBlocks] = useState<BlockDef[]>([
+    { label: "", start_hour: 9, end_hour: 17 },
+  ]);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [resultLink, setResultLink] = useState<string | null>(null);
+  const [organizerLink, setOrganizerLink] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data.session) {
+        setUserId(data.session.user.id);
+        await loadBands(data.session.user.id);
+      }
+      setChecking(false);
+    };
+    load();
+  }, []);
+
+  const loadBands = async (uid: string) => {
+    const { data } = await supabase.from("bands").select("id, name").eq("owner_id", uid);
+    setBands(data ?? []);
+    if (data && data.length === 1) setBandId(data[0].id);
+  };
+
+  const login = async () => {
+    setLoginError("");
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data.user) {
+      setLoginError("Couldn't log in — check your email/password.");
+      return;
+    }
+    setUserId(data.user.id);
+    await loadBands(data.user.id);
+  };
+
+  const createBand = async () => {
+    if (!newBandName.trim() || !userId) return;
+    setCreatingBand(true);
+    const { data, error } = await supabase
+      .from("bands")
+      .insert({ name: newBandName.trim(), owner_id: userId })
+      .select()
+      .single();
+    setCreatingBand(false);
+    if (!error && data) {
+      setBands((prev) => [...prev, data]);
+      setBandId(data.id);
+      setNewBandName("");
+    }
+  };
+
+  const toggleWeekday = (d: number) => {
+    setActiveWeekdays((prev) =>
+      prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort()
+    );
+  };
+
+  const addCustomBlock = () => {
+    setCustomBlocks((prev) => [...prev, { label: "", start_hour: 9, end_hour: 17 }]);
+  };
+  const updateCustomBlock = (i: number, patch: Partial<BlockDef>) => {
+    setCustomBlocks((prev) => prev.map((b, idx) => (idx === i ? { ...b, ...patch } : b)));
+  };
+  const removeCustomBlock = (i: number) => {
+    setCustomBlocks((prev) => prev.filter((_, idx) => idx !== i));
+  };
+
+  const createSession = async () => {
+    if (!bandId || !title.trim() || !startDate || !endDate) return;
+    setCreateError("");
+    setCreating(true);
+
+    let blocks: BlockDef[];
+    if (mode === "simple") blocks = SIMPLE_BLOCKS;
+    else if (mode === "whole_day") blocks = WHOLE_DAY_BLOCKS;
+    else blocks = customBlocks.filter((b) => b.label.trim());
+
+    if (mode === "custom" && blocks.length === 0) {
+      setCreateError("Add at least one named block for custom mode.");
+      setCreating(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("sessions")
+      .insert({
+        band_id: bandId,
+        title: title.trim(),
+        start_date: startDate,
+        end_date: endDate,
+        mode,
+        blocks,
+        active_weekdays: activeWeekdays,
+      })
+      .select()
+      .single();
+
+    setCreating(false);
+    if (error || !data) {
+      setCreateError(error?.message || "Couldn't create session.");
+      return;
+    }
+
+    const link = `${window.location.origin}/join/${bandId}?session=${data.id}`;
+    const orgLink = `${window.location.origin}/session/${data.id}/organizer`;
+    setResultLink(link);
+    setOrganizerLink(orgLink);
+  };
+
+  const copyLink = () => {
+    if (resultLink) navigator.clipboard.writeText(resultLink);
+  };
+  const copyOrganizerLink = () => {
+    if (organizerLink) navigator.clipboard.writeText(organizerLink);
+  };
+
+  return (
+    <main className="min-h-screen bg-[#14151A] text-[#F2F1EA] px-4 py-8">
+      <div className="max-w-xl mx-auto">
+        <div className="flex gap-2 mb-2">
+          <div className="w-2.5 h-2.5 rounded-full bg-[#FF5A5F]" />
+          <div className="w-2.5 h-2.5 rounded-full bg-[#FFC24B]" />
+          <div className="w-2.5 h-2.5 rounded-full bg-[#35D07F]" />
+        </div>
+        <h1 className="text-2xl font-black uppercase tracking-tight mb-6">New Session</h1>
+
+        {checking ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : !userId ? (
+          <div>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email"
+              className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] mb-3 outline-none"
+            />
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              placeholder="Password"
+              className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] mb-3 outline-none"
+            />
+            {loginError && <p className="text-[#FF5A5F] text-xs mb-3">{loginError}</p>}
+            <button
+              onClick={login}
+              className="w-full py-3 rounded-xl font-bold text-[15px]"
+              style={{ background: "#35D07F", color: "#0E1712" }}
+            >
+              Log in
+            </button>
+          </div>
+        ) : resultLink ? (
+          <div>
+            <p className="text-[#35D07F] text-sm mb-3">Session created.</p>
+
+            <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1.5">
+              Share this with the band
+            </div>
+            <div className="bg-[#1C1E24] border border-[#2C2F38] rounded-lg p-3 text-xs text-gray-300 break-all mb-2">
+              {resultLink}
+            </div>
+            <button
+              onClick={copyLink}
+              className="w-full py-2.5 rounded-lg border text-sm font-bold mb-5"
+              style={{ borderColor: "#2C2F38", background: "#1C1E24", color: "#C7C9D1" }}
+            >
+              Copy invite link
+            </button>
+
+            <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1.5">
+              Yours only — don't share this one
+            </div>
+            <div className="bg-[#1C1E24] border border-[#FFC24B] rounded-lg p-3 text-xs text-gray-300 break-all mb-2">
+              {organizerLink}
+            </div>
+            <button
+              onClick={copyOrganizerLink}
+              className="w-full py-2.5 rounded-lg border text-sm font-bold mb-5"
+              style={{ borderColor: "#2C2F38", background: "#1C1E24", color: "#C7C9D1" }}
+            >
+              Copy your organizer link
+            </button>
+
+            <button
+              onClick={() => {
+                setResultLink(null);
+                setOrganizerLink(null);
+                setTitle("");
+                setStartDate("");
+                setEndDate("");
+              }}
+              className="w-full py-2.5 rounded-lg text-sm font-bold"
+              style={{ background: "#35D07F", color: "#0E1712" }}
+            >
+              Create another session
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Band picker */}
+            <div className="mb-5">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1.5">Band</div>
+              {bands.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {bands.map((b) => (
+                    <button
+                      key={b.id}
+                      onClick={() => setBandId(b.id)}
+                      className="px-3 py-1.5 rounded-lg border text-sm font-bold"
+                      style={{
+                        borderColor: bandId === b.id ? "#35D07F" : "#2C2F38",
+                        background: bandId === b.id ? "#1C2A22" : "transparent",
+                        color: bandId === b.id ? "#35D07F" : "#C7C9D1",
+                      }}
+                    >
+                      {b.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  value={newBandName}
+                  onChange={(e) => setNewBandName(e.target.value)}
+                  placeholder="New band name"
+                  className="flex-1 box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm outline-none"
+                />
+                <button
+                  onClick={createBand}
+                  disabled={creatingBand || !newBandName.trim()}
+                  className="px-3 py-2 rounded-lg text-sm font-bold"
+                  style={{ background: "#35D07F", color: "#0E1712" }}
+                >
+                  + Add
+                </button>
+              </div>
+            </div>
+
+            {bandId && (
+              <>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Session title (e.g. September rehearsals)"
+                  className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] mb-3 outline-none"
+                />
+
+                <div className="flex gap-2 mb-4">
+                  <div className="flex-1">
+                    <div className="text-xs text-gray-400 mb-1">Start date</div>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm outline-none"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-xs text-gray-400 mb-1">End date</div>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1.5">
+                  Time frame
+                </div>
+                <div className="flex gap-2 mb-4">
+                  {[
+                    { value: "simple" as Mode, label: "Simple (AM/Mid/PM)" },
+                    { value: "whole_day" as Mode, label: "Whole days only" },
+                    { value: "custom" as Mode, label: "Custom" },
+                  ].map((m) => (
+                    <button
+                      key={m.value}
+                      onClick={() => setMode(m.value)}
+                      className="flex-1 py-2 rounded-lg border text-xs font-bold"
+                      style={{
+                        borderColor: mode === m.value ? "#35D07F" : "#2C2F38",
+                        background: mode === m.value ? "#1C2A22" : "transparent",
+                        color: mode === m.value ? "#35D07F" : "#8B8E98",
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+
+                {mode === "custom" && (
+                  <div className="mb-4">
+                    <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1.5">
+                      Blocks
+                    </div>
+                    {customBlocks.map((b, i) => (
+                      <div key={i} className="flex gap-2 mb-2 items-center">
+                        <input
+                          value={b.label}
+                          onChange={(e) => updateCustomBlock(i, { label: e.target.value })}
+                          placeholder="e.g. Load-in"
+                          className="flex-1 box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-2 py-2 text-sm outline-none"
+                        />
+                        <select
+                          value={b.start_hour}
+                          onChange={(e) => updateCustomBlock(i, { start_hour: Number(e.target.value) })}
+                          className="bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-1 py-2 text-xs outline-none"
+                        >
+                          {Array.from({ length: 24 }, (_, h) => (
+                            <option key={h} value={h}>{formatHour(h)}</option>
+                          ))}
+                        </select>
+                        <span className="text-gray-500 text-xs">to</span>
+                        <select
+                          value={b.end_hour}
+                          onChange={(e) => updateCustomBlock(i, { end_hour: Number(e.target.value) })}
+                          className="bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-1 py-2 text-xs outline-none"
+                        >
+                          {Array.from({ length: 24 }, (_, h) => h + 1).map((h) => (
+                            <option key={h} value={h}>{formatHour(h)}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => removeCustomBlock(i)}
+                          className="text-[#FF5A5F] text-sm px-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={addCustomBlock}
+                      className="text-xs font-bold text-[#35D07F]"
+                    >
+                      + Add block
+                    </button>
+                  </div>
+                )}
+
+                <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1.5">
+                  Days that count
+                </div>
+                <div className="flex gap-1.5 mb-5">
+                  {WEEKDAY_LABELS.map((label, i) => (
+                    <button
+                      key={i}
+                      onClick={() => toggleWeekday(i)}
+                      className="flex-1 py-2 rounded-lg border text-xs font-bold"
+                      style={{
+                        borderColor: activeWeekdays.includes(i) ? "#35D07F" : "#2C2F38",
+                        background: activeWeekdays.includes(i) ? "#1C2A22" : "transparent",
+                        color: activeWeekdays.includes(i) ? "#35D07F" : "#8B8E98",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {createError && <p className="text-[#FF5A5F] text-xs mb-3">{createError}</p>}
+
+                <button
+                  onClick={createSession}
+                  disabled={creating || !title.trim() || !startDate || !endDate}
+                  className="w-full py-3 rounded-xl font-bold text-[15px]"
+                  style={{ background: "#35D07F", color: "#0E1712" }}
+                >
+                  {creating ? "Creating…" : "Create session"}
+                </button>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </main>
+  );
+}
+CREATE_EOF
+echo "Writing organizer page..."
+cat > "app/session/[id]/organizer/page.tsx" << 'ORG_EOF'
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { dateRangeFiltered, formatFullDate } from "@/lib/dates";
+import { SummaryPaintCalendar, BlockDef, cellKey } from "@/components/Calendar";
+
+interface Suggestion {
+  date: string;
+  block: number;
+  blurb: string;
+}
+
+export default function OrganizerPage({ params }: { params: { id: string } }) {
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [authorized, setAuthorized] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [blocks, setBlocks] = useState<BlockDef[]>([]);
+  const [dates, setDates] = useState<string[]>([]);
+  const [counts, setCounts] = useState<Record<string, { green: number; yellow: number; red: number }>>({});
+  const [total, setTotal] = useState(0);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+
+  const checkOwnership = async (userId: string, bandId: string) => {
+    const { data: band } = await supabase
+      .from("bands")
+      .select("id")
+      .eq("id", bandId)
+      .eq("owner_id", userId)
+      .single();
+    return !!band;
+  };
+
+  const loadSessionData = async (bandId: string) => {
+    const { data: session, error: sessionError } = await supabase
+      .from("sessions")
+      .select("start_date, end_date, blocks, active_weekdays")
+      .eq("id", params.id)
+      .single();
+
+    if (sessionError || !session?.start_date || !session?.end_date) {
+      setLoadError("This session doesn't have a date range set up yet.");
+      setLoading(false);
+      return;
+    }
+
+    setStartDate(session.start_date);
+    setEndDate(session.end_date);
+    const sessionBlocks: BlockDef[] = session.blocks ?? [];
+    setBlocks(sessionBlocks);
+    const activeWeekdays: number[] = session.active_weekdays ?? [0, 1, 2, 3, 4, 5, 6];
+    const d = dateRangeFiltered(session.start_date, session.end_date, activeWeekdays);
+    setDates(d);
+
+    const res = await fetch(`/api/session/${params.id}/suggest`);
+    const json = await res.json();
+
+    const grouped: Record<string, { green: number; yellow: number; red: number }> = {};
+    let max = 0;
+    (json.allCounts ?? []).forEach((c: any) => {
+      const date = d[c.day_index];
+      if (date) {
+        grouped[cellKey(date, c.block_index)] = c;
+        max = Math.max(max, c.responded);
+      }
+    });
+    setCounts(grouped);
+    setTotal(max);
+    setSuggestions(
+      (json.suggestions ?? []).map((s: any) => ({
+        date: d[s.day_index],
+        block: s.block_index,
+        blurb: s.blurb,
+      }))
+    );
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    const init = async () => {
+      const { data: session } = await supabase
+        .from("sessions")
+        .select("band_id")
+        .eq("id", params.id)
+        .single();
+
+      if (!session?.band_id) {
+        setAuthError("This session doesn't exist.");
+        setCheckingAuth(false);
+        return;
+      }
+
+      const { data: authData } = await supabase.auth.getSession();
+      if (authData.session) {
+        const owns = await checkOwnership(authData.session.user.id, session.band_id);
+        if (owns) {
+          setAuthorized(true);
+          await loadSessionData(session.band_id);
+        } else {
+          setAuthError("You're not the organizer for this band's sessions.");
+        }
+      }
+      setCheckingAuth(false);
+    };
+    init();
+  }, [params.id]);
+
+  const login = async () => {
+    setLoginError("");
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data.user) {
+      setLoginError("Couldn't log in — check your email/password.");
+      return;
+    }
+    const { data: session } = await supabase
+      .from("sessions")
+      .select("band_id")
+      .eq("id", params.id)
+      .single();
+    if (!session?.band_id) {
+      setAuthError("This session doesn't exist.");
+      return;
+    }
+    const owns = await checkOwnership(data.user.id, session.band_id);
+    if (!owns) {
+      setAuthError("You're not the organizer for this band's sessions.");
+      return;
+    }
+    setAuthorized(true);
+    setLoading(true);
+    await loadSessionData(session.band_id);
+  };
+
+  return (
+    <main className="min-h-screen bg-[#14151A] text-[#F2F1EA] px-4 py-8">
+      <div className="max-w-xl mx-auto">
+        <h1 className="text-2xl font-black uppercase mb-1">Group view</h1>
+        <p className="text-sm text-gray-400 mb-6">
+          Darker green = more people free. Nobody's individual answer is shown here.
+        </p>
+
+        {checkingAuth ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : !authorized ? (
+          <div>
+            {authError && <p className="text-[#FF5A5F] text-sm mb-3">{authError}</p>}
+            <p className="text-sm text-gray-400 mb-3">Log in as the organizer to see this.</p>
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email"
+              className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] mb-3 outline-none"
+            />
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
+              placeholder="Password"
+              className="w-full box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] mb-3 outline-none"
+            />
+            {loginError && <p className="text-[#FF5A5F] text-xs mb-3">{loginError}</p>}
+            <button
+              onClick={login}
+              className="w-full py-3 rounded-xl font-bold text-[15px]"
+              style={{ background: "#35D07F", color: "#0E1712" }}
+            >
+              Log in
+            </button>
+          </div>
+        ) : loadError ? (
+          <p className="text-[#FF5A5F] text-sm">{loadError}</p>
+        ) : loading ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : (
+          <>
+            <div className="mb-7">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
+                Suggested windows
+              </div>
+              {suggestions.length === 0 ? (
+                <p className="text-sm text-gray-400">No clean windows yet — need a few more responses.</p>
+              ) : (
+                suggestions.map((s) => (
+                  <div
+                    key={`${s.date}-${s.block}`}
+                    className="bg-[#1C1E24] border border-[#2C2F38] rounded-xl px-3.5 py-3 mb-2 flex justify-between items-center"
+                  >
+                    <div>
+                      <div className="font-bold text-sm">
+                        {formatFullDate(s.date)} — {blocks[s.block]?.label ?? ""}
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">{s.blurb}</div>
+                    </div>
+                    <div
+                      className="rounded-full flex-shrink-0"
+                      style={{ width: 26, height: 26, background: "#35D07F", boxShadow: "0 0 10px #35D07F88" }}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1.5">Calendar</div>
+            <SummaryPaintCalendar startDate={startDate} endDate={endDate} dates={dates} blocks={blocks} counts={counts} total={total} />
+          </>
+        )}
+      </div>
+    </main>
+  );
+}
+ORG_EOF
+echo "All files updated."
