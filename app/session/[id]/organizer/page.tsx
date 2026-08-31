@@ -31,6 +31,10 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [ownerName, setOwnerName] = useState("Organizer");
+  const [bandId, setBandId] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [invitePhone, setInvitePhone] = useState("");
 
   const [sessionTitle, setSessionTitle] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -175,6 +179,7 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
         const owns = await checkOwnership(authData.session.user.id, session.band_id);
         if (owns) {
           setAuthorized(true);
+          setBandId(session.band_id);
           await loadSessionData(session.band_id, authData.session.user.id);
         } else {
           setAuthError("You're not the organizer for this band's sessions.");
@@ -207,6 +212,7 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
       return;
     }
     setAuthorized(true);
+    setBandId(session.band_id);
     setLoading(true);
     await loadSessionData(session.band_id, data.user.id);
   };
@@ -233,6 +239,40 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
       setConfirmedStartUtc(startUtc);
       setConfirmedEndUtc(endUtc);
     }
+  };
+
+  const inviteLink =
+    bandId && typeof window !== "undefined"
+      ? `${window.location.origin}/join/${bandId}?session=${params.id}`
+      : "";
+
+  const copyInviteLink = () => {
+    if (!inviteLink) return;
+    navigator.clipboard.writeText(inviteLink);
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 2000);
+  };
+
+  const inviteByEmail = () => {
+    if (!inviteLink) return;
+    const subject = encodeURIComponent(`Join us on RLGL for ${sessionTitle || "our next session"}`);
+    const body = encodeURIComponent(
+      `Hey! Tap this link to mark your availability for ${sessionTitle || "our next rehearsal"}:\n\n${inviteLink}`
+    );
+    const to = inviteEmail.trim() ? encodeURIComponent(inviteEmail.trim()) : "";
+    window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
+  };
+
+  const inviteByText = () => {
+    if (!inviteLink) return;
+    const body = encodeURIComponent(
+      `Join us on RLGL to mark your availability for ${sessionTitle || "our next rehearsal"}: ${inviteLink}`
+    );
+    const to = invitePhone.trim() ? invitePhone.trim().replace(/[^0-9+]/g, "") : "";
+    // "?&body=" (not just "?body=" or "&body=") is the awkward but widely-cited
+    // trick that works across both iOS's and Android's non-standard sms: URI
+    // handling -- there's no single correct format for both platforms.
+    window.location.href = `sms:${to}?&body=${body}`;
   };
 
   return (
@@ -278,6 +318,62 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
         ) : (
           <>
             <h2 className="text-sm text-gray-400 mb-4">Welcome, {ownerName}</h2>
+
+            <div className="bg-[#1C1E24] border border-[#2C2F38] rounded-xl p-3.5 mb-5">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
+                Invite people
+              </div>
+              <div className="bg-[#14151A] border border-[#2C2F38] rounded-lg p-2.5 text-xs text-gray-300 break-all mb-2">
+                {inviteLink || "Loading…"}
+              </div>
+              <button
+                onClick={copyInviteLink}
+                disabled={!inviteLink}
+                className="w-full py-2 rounded-lg border text-sm font-bold mb-3"
+                style={{ borderColor: "#2C2F38", background: "#14151A", color: "#C7C9D1" }}
+              >
+                {inviteCopied ? "Copied!" : "Copy invite link"}
+              </button>
+
+              <div className="flex gap-2 mb-2">
+                <input
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="Their email (optional)"
+                  className="flex-1 box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-2.5 py-2 text-xs outline-none"
+                />
+                <button
+                  onClick={inviteByEmail}
+                  disabled={!inviteLink}
+                  className="px-3 py-2 rounded-lg text-xs font-bold flex-shrink-0"
+                  style={{ background: "#1C1E24", border: "1px solid #2C2F38", color: "#F2F1EA" }}
+                >
+                  Email invite
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={invitePhone}
+                  onChange={(e) => setInvitePhone(e.target.value)}
+                  placeholder="Their phone (optional)"
+                  className="flex-1 box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-2.5 py-2 text-xs outline-none"
+                />
+                <button
+                  onClick={inviteByText}
+                  disabled={!inviteLink}
+                  className="px-3 py-2 rounded-lg text-xs font-bold flex-shrink-0"
+                  style={{ background: "#1C1E24", border: "1px solid #2C2F38", color: "#F2F1EA" }}
+                >
+                  Text invite
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-2">
+                Email/text opens your own Mail or Messages app with the invite pre-filled --
+                RLGL doesn't send anything itself. Leave the box blank to just get a blank
+                message you can address yourself.
+              </p>
+            </div>
+
             <Bulletin sessionId={params.id} authorName={ownerName} />
             <FileShare sessionId={params.id} canUpload />
 
