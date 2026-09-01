@@ -25,6 +25,16 @@ const STATUS_COLOR: Record<Status, string> = {
   red: "#FF5A5F",
 };
 
+// Shape, not just color, marks each status -- color alone isn't enough for
+// colorblind users (red/green especially). A checkmark/question/X reads
+// even in grayscale.
+const STATUS_ICON: Record<Status, string> = {
+  unset: "",
+  green: "\u2713", // check
+  yellow: "?",
+  red: "\u2715", // x
+};
+
 const WEEKDAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
 
 export function cellKey(date: string, block: number) {
@@ -136,7 +146,7 @@ export function InteractivePaintCalendar({
                       onMouseEnter={readOnly ? undefined : () => continuePaint(date, block)}
                       onTouchStart={readOnly ? undefined : () => startPaint(date, block)}
                       title={notes?.join(", ")}
-                      className="h-10 rounded border select-none flex items-center justify-center px-0.5"
+                      className="h-10 rounded border select-none flex items-center justify-center px-0.5 relative"
                       style={{
                         borderColor: "#2C2F38",
                         background: STATUS_COLOR[status],
@@ -144,6 +154,14 @@ export function InteractivePaintCalendar({
                         cursor: readOnly ? "default" : "pointer",
                       }}
                     >
+                      {status !== "unset" && (
+                        <span
+                          className="absolute top-0.5 left-1 text-[10px] font-black leading-none"
+                          style={{ color: "#0E1712" }}
+                        >
+                          {STATUS_ICON[status]}
+                        </span>
+                      )}
                       {notes && notes.length > 0 && (
                         <span
                           className="text-[8px] font-bold leading-tight text-center truncate w-full"
@@ -218,9 +236,18 @@ export function SummaryPaintCalendar({
                     <div
                       key={date}
                       title={`${c.green} free, ${c.yellow} flexible, ${c.red} busy`}
-                      className="h-10 rounded border"
+                      className="h-10 rounded border relative"
                       style={{ borderColor: "#2C2F38", background: bg }}
-                    />
+                    >
+                      {c.red > 0 && (
+                        <span
+                          className="absolute top-0.5 right-1 text-[9px] font-black leading-none"
+                          style={{ color: "#F2F1EA" }}
+                        >
+                          {c.red}
+                        </span>
+                      )}
+                    </div>
                   );
                 })}
               </div>

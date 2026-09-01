@@ -35,6 +35,11 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
   const [inviteCopied, setInviteCopied] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [invitePhone, setInvitePhone] = useState("");
+  const [activeWeekdays, setActiveWeekdays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
+  const [repeatTitle, setRepeatTitle] = useState("");
+  const [repeatStartDate, setRepeatStartDate] = useState("");
+  const [repeating, setRepeating] = useState(false);
+  const [repeatError, setRepeatError] = useState("");
 
   const [sessionTitle, setSessionTitle] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -101,9 +106,18 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
     const sessionBlocks: BlockDef[] = isValid ? rawBlocks : SIMPLE_BLOCKS;
     setBlocks(sessionBlocks);
     const activeWeekdays: number[] = session.active_weekdays ?? [0, 1, 2, 3, 4, 5, 6];
+    setActiveWeekdays(activeWeekdays);
     const d = dateRangeFiltered(session.start_date, session.end_date, activeWeekdays);
     setDates(d);
     if (d.length > 0) setPickDate(d[0]);
+
+    // Default "repeat" suggestion: same title, one week later. Just a
+    // starting point -- both fields are editable, since FBR repeats
+    // constantly and Women In Harmony repeats rarely and irregularly.
+    setRepeatTitle(session.title ?? "");
+    const suggestedNext = new Date(session.start_date + "T00:00:00");
+    suggestedNext.setDate(suggestedNext.getDate() + 7);
+    setRepeatStartDate(suggestedNext.toISOString().slice(0, 10));
 
     const res = await fetch(`/api/session/${params.id}/suggest`);
     const json = await res.json();
@@ -275,6 +289,40 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
     window.location.href = `sms:${to}?&body=${body}`;
   };
 
+  const duplicateSession = async () => {
+    if (!repeatStartDate || !bandId) return;
+    setRepeatError("");
+    setRepeating(true);
+
+    const spanDays = Math.round(
+      (new Date(endDate + "T00:00:00").getTime() - new Date(startDate + "T00:00:00").getTime()) / 86400000
+    );
+    const newEnd = new Date(repeatStartDate + "T00:00:00");
+    newEnd.setDate(newEnd.getDate() + spanDays);
+    const newEndDate = newEnd.toISOString().slice(0, 10);
+
+    const { data, error } = await supabase
+      .from("sessions")
+      .insert({
+        band_id: bandId,
+        title: repeatTitle.trim() || sessionTitle,
+        start_date: repeatStartDate,
+        end_date: newEndDate,
+        mode: "custom",
+        blocks,
+        active_weekdays: activeWeekdays,
+      })
+      .select()
+      .single();
+
+    setRepeating(false);
+    if (error || !data) {
+      setRepeatError(error?.message || "Couldn't create the next session.");
+      return;
+    }
+    window.location.href = `/session/${data.id}/organizer`;
+  };
+
   return (
     <main className="min-h-screen bg-[#14151A] text-[#F2F1EA] px-4 py-8">
       <div className="max-w-xl mx-auto">
@@ -372,6 +420,40 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
                 RLGL doesn't send anything itself. Leave the box blank to just get a blank
                 message you can address yourself.
               </p>
+            </div>
+
+            <div className="bg-[#1C1E24] border border-[#2C2F38] rounded-xl p-3.5 mb-5">
+              <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
+                Repeat this session
+              </div>
+              <p className="text-[11px] text-gray-500 mb-3">
+                Sets up a fresh poll for the same band with the same time blocks -- this
+                session is untouched, and nobody's notified automatically. Good for a weekly
+                thing (FBR) or a one-off you'll only reach for occasionally (Women In
+                Harmony) -- it only runs when you click it.
+              </p>
+              <label className="text-[11px] text-gray-500 block mb-1">Title</label>
+              <input
+                value={repeatTitle}
+                onChange={(e) => setRepeatTitle(e.target.value)}
+                className="w-full box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-2.5 py-2 text-sm mb-2.5 outline-none"
+              />
+              <label className="text-[11px] text-gray-500 block mb-1">New start date</label>
+              <input
+                type="date"
+                value={repeatStartDate}
+                onChange={(e) => setRepeatStartDate(e.target.value)}
+                className="w-full box-border bg-[#14151A] border border-[#2C2F38] rounded-lg px-2.5 py-2 text-sm mb-2.5 outline-none"
+              />
+              {repeatError && <p className="text-[#FF5A5F] text-xs mb-2">{repeatError}</p>}
+              <button
+                onClick={duplicateSession}
+                disabled={repeating || !repeatStartDate}
+                className="w-full py-2.5 rounded-lg text-sm font-bold"
+                style={{ background: "#35D07F", color: "#0E1712" }}
+              >
+                {repeating ? "Creating…" : "Create the next one"}
+              </button>
             </div>
 
             <Bulletin sessionId={params.id} authorName={ownerName} />
