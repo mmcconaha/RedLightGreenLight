@@ -369,13 +369,18 @@ export default function MyCalendarPage() {
               Jump to today
             </button>
 
-            {/* Month grid -- big color blocks */}
-            <div className="grid grid-cols-7 gap-2 mb-2">
+            {/* Month grid -- big color blocks. Below the sm breakpoint (real
+                phone widths) a 7-across grid leaves each day only ~40px
+                wide, nowhere near enough to show real event text, so
+                mobile gets compact dots instead and leans on the "Selected
+                day detail" panel below for the actual titles; sm+ (tablet/
+                desktop) keeps the inline title pills. */}
+            <div className="grid grid-cols-7 gap-1 sm:gap-2 mb-2">
               {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-                <div key={i} className="text-center text-sm text-gray-500 font-bold">{d}</div>
+                <div key={i} className="text-center text-xs sm:text-sm text-gray-500 font-bold">{d}</div>
               ))}
             </div>
-            <div className="grid grid-cols-7 gap-2">
+            <div className="grid grid-cols-7 gap-1 sm:gap-2">
               {grid.flat().map((dateISO, i) => {
                 if (!dateISO) return <div key={i} />;
                 const day = monthData[dateISO];
@@ -391,11 +396,10 @@ export default function MyCalendarPage() {
                   <button
                     key={i}
                     onClick={() => setSelectedDate(isSelected ? null : dateISO)}
-                    className="rounded-lg flex flex-col items-start p-1.5 text-left overflow-hidden"
+                    className="rounded-lg flex flex-col items-start p-1 sm:p-1.5 text-left overflow-hidden min-h-16 sm:min-h-32"
                     style={{
                       background: dayBg(day),
                       color: dayTextColor(day),
-                      minHeight: "128px",
                       border: isSelected
                         ? `2px solid ${TEXT}`
                         : isToday
@@ -405,8 +409,26 @@ export default function MyCalendarPage() {
                         : `1px solid ${BORDER}`,
                     }}
                   >
-                    <span className="text-lg font-black mb-1">{Number(dateISO.slice(8, 10))}</span>
-                    <div className="flex flex-col gap-0.5 w-full">
+                    <span className="text-sm sm:text-lg font-black mb-1">{Number(dateISO.slice(8, 10))}</span>
+
+                    {/* Mobile: compact dots, tap the day for titles below */}
+                    {items.length > 0 && (
+                      <div className="flex sm:hidden flex-wrap gap-1 mt-0.5">
+                        {items.slice(0, 6).map((item, idx) => (
+                          <span
+                            key={idx}
+                            className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                            style={{ background: item.color }}
+                          />
+                        ))}
+                        {items.length > 6 && (
+                          <span className="text-[9px] opacity-70 leading-none">+{items.length - 6}</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Tablet/desktop: full title pills */}
+                    <div className="hidden sm:flex flex-col gap-0.5 w-full">
                       {shownItems.map((item, idx) => (
                         <div
                           key={idx}
@@ -428,6 +450,10 @@ export default function MyCalendarPage() {
                 );
               })}
             </div>
+
+            <p className="sm:hidden text-[11px] text-gray-500 mt-2 mb-0">
+              Tap a day to see what's on it.
+            </p>
 
             {/* Selected day detail */}
             {selectedDate && (
