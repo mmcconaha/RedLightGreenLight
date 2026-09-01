@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { BlockDef, SIMPLE_BLOCKS, WHOLE_DAY_BLOCKS } from "@/components/Calendar";
+import AppNav from "@/components/AppNav";
 
 type Mode = "simple" | "whole_day" | "custom";
 
@@ -185,6 +186,8 @@ export default function CreatePage() {
           <div className="w-2.5 h-2.5 rounded-full bg-[#35D07F]" />
         </div>
         <h1 className="text-2xl font-black uppercase tracking-tight mb-6">New Session</h1>
+
+        <AppNav current="create" />
 
         {checking ? (
           <p className="text-sm text-gray-400">Loading…</p>

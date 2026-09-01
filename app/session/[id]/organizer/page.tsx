@@ -9,6 +9,7 @@ import { zonedTimeToUtc } from "@/lib/google";
 import { downloadIcs } from "@/lib/ics";
 import { Bulletin } from "@/components/Bulletin";
 import { FileShare } from "@/components/FileShare";
+import AppNav from "@/components/AppNav";
 
 interface Suggestion {
   date: string;
@@ -331,6 +332,8 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
           Darker green = more people free. Nobody's individual answer is shown here.
         </p>
 
+        <AppNav current="organizer" />
+
         {checkingAuth ? (
           <p className="text-sm text-gray-400">Loading…</p>
         ) : !authorized ? (
@@ -366,6 +369,14 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
         ) : (
           <>
             <h2 className="text-sm text-gray-400 mb-4">Welcome, {ownerName}</h2>
+
+            <a
+              href={`/session/${params.id}/respond`}
+              className="block w-full text-center py-2.5 rounded-lg text-sm font-bold mb-5"
+              style={{ background: "#1C1E24", color: "#F2F1EA", border: "1px solid #35D07F" }}
+            >
+              ✏️ Fill in my own availability
+            </a>
 
             <div className="bg-[#1C1E24] border border-[#2C2F38] rounded-xl p-3.5 mb-5">
               <div className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">

@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { monthGrid } from "@/lib/dates";
+import AppNav from "@/components/AppNav";
 
 const GOOGLE_BLUE = "#4A9EFF";
 const APPLE_GRAY = "#A8ADBA";
@@ -217,6 +218,8 @@ export default function MyCalendarPage() {
         <p className="text-xs text-gray-400 mb-6">
           Connect once, see everything -- your real calendars plus every RLGL rehearsal, merged.
         </p>
+
+        <AppNav current="my-calendar" />
 
         {checking ? (
           <p className="text-sm text-gray-400">Loading…</p>

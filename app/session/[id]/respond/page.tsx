@@ -8,6 +8,7 @@ import { InteractivePaintCalendar, BlockDef, SIMPLE_BLOCKS, cellKey } from "@/co
 import { Bulletin } from "@/components/Bulletin";
 import { FileShare } from "@/components/FileShare";
 import { downloadIcs } from "@/lib/ics";
+import AppNav from "@/components/AppNav";
 
 export default function RespondPage({ params }: { params: { id: string } }) {
   const [checkingSession, setCheckingSession] = useState(true);
@@ -16,6 +17,7 @@ export default function RespondPage({ params }: { params: { id: string } }) {
   const [loginError, setLoginError] = useState("");
   const [memberId, setMemberId] = useState<string | null>(null);
   const [memberName, setMemberName] = useState("");
+  const [isOwner, setIsOwner] = useState(false);
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -76,7 +78,7 @@ export default function RespondPage({ params }: { params: { id: string } }) {
     const load = async () => {
       const { data: session, error: sessionError } = await supabase
         .from("sessions")
-        .select("start_date, end_date, blocks, active_weekdays, confirmed_title, confirmed_start_utc, confirmed_end_utc")
+        .select("band_id, start_date, end_date, blocks, active_weekdays, confirmed_title, confirmed_start_utc, confirmed_end_utc")
         .eq("id", params.id)
         .single();
 
@@ -119,6 +121,15 @@ export default function RespondPage({ params }: { params: { id: string } }) {
           await loadExisting(member.id, d);
           await loadNotes(member.id, d);
           await checkAppleStatus(member.id);
+        }
+
+        if (session.band_id) {
+          const { data: band } = await supabase
+            .from("bands")
+            .select("owner_id")
+            .eq("id", session.band_id)
+            .single();
+          setIsOwner(band?.owner_id === data.session.user.id);
         }
       }
 
@@ -169,6 +180,20 @@ export default function RespondPage({ params }: { params: { id: string } }) {
     await loadExisting(member.id, dates);
     await loadNotes(member.id, dates);
     await checkAppleStatus(member.id);
+
+    const { data: sessionRow } = await supabase
+      .from("sessions")
+      .select("band_id")
+      .eq("id", params.id)
+      .single();
+    if (sessionRow?.band_id) {
+      const { data: band } = await supabase
+        .from("bands")
+        .select("owner_id")
+        .eq("id", sessionRow.band_id)
+        .single();
+      setIsOwner(band?.owner_id === data.user.id);
+    }
   };
 
   const checkAppleStatus = async (memberIdArg: string) => {
@@ -328,6 +353,9 @@ export default function RespondPage({ params }: { params: { id: string } }) {
           <div className="w-2.5 h-2.5 rounded-full bg-[#FFC24B]" />
           <div className="w-2.5 h-2.5 rounded-full bg-[#35D07F]" />
         </div>
+
+        <AppNav current="respond" />
+
         <h1 className="text-3xl font-black uppercase tracking-tight leading-none mb-2">
           Red Light
           <br />
@@ -377,6 +405,16 @@ export default function RespondPage({ params }: { params: { id: string } }) {
         ) : (
           <>
             <p className="text-sm text-gray-300 mb-3">Hey {memberName} —</p>
+
+            {isOwner && (
+              <a
+                href={`/session/${params.id}/organizer`}
+                className="block w-full text-center py-2.5 rounded-lg text-sm font-bold mb-5"
+                style={{ background: "#1C1E24", color: "#F2F1EA", border: "1px solid #35D07F" }}
+              >
+                📋 Organizer view (see everyone's responses)
+              </a>
+            )}
 
             <Bulletin sessionId={params.id} authorName={memberName} />
             <FileShare sessionId={params.id} canUpload={false} />

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { formatFullDate } from "@/lib/dates";
+import AppNav, { getHomeShortcut, setHomeShortcut, clearHomeShortcut, HomeShortcut } from "@/components/AppNav";
 
 interface SessionRow {
   id: string;
@@ -35,9 +36,11 @@ export default function DashboardPage() {
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [passwordMsg, setPasswordMsg] = useState("");
+  const [homeShortcut, setHomeShortcutState] = useState<HomeShortcut | null>(null);
 
   const loadDashboard = async (uid: string) => {
     setLoadingData(true);
+    setHomeShortcutState(getHomeShortcut(uid));
 
     // Bands this person owns/leads
     const { data: owned } = await supabase.from("bands").select("id, name").eq("owner_id", uid);
@@ -118,6 +121,19 @@ export default function DashboardPage() {
     } else {
       setForgotMsg("Check your email for a reset link.");
     }
+  };
+
+  const pinAsHome = (bandId: string, bandName: string, sessionId: string, role: "organizer" | "respond") => {
+    if (!userId) return;
+    const shortcut: HomeShortcut = { href: `/session/${sessionId}/${role}`, label: bandName };
+    setHomeShortcut(userId, shortcut);
+    setHomeShortcutState(shortcut);
+  };
+
+  const unpinHome = () => {
+    if (!userId) return;
+    clearHomeShortcut(userId);
+    setHomeShortcutState(null);
   };
 
   const logout = async () => {
@@ -211,6 +227,8 @@ export default function DashboardPage() {
           <p className="text-sm text-gray-400">Loading…</p>
         ) : (
           <>
+            <AppNav current="dashboard" />
+
             <a
               href="/create"
               className="block w-full text-center py-2.5 rounded-lg text-sm font-bold mb-3"
@@ -270,9 +288,28 @@ export default function DashboardPage() {
               {ledBands.length === 0 ? (
                 <p className="text-xs text-gray-500">None yet — create a session to start one.</p>
               ) : (
-                ledBands.map((b) => (
+                ledBands.map((b) => {
+                  const isHome = homeShortcut?.label === b.name && homeShortcut?.href.includes("/organizer");
+                  const latestSessionId = b.sessions[0]?.id;
+                  return (
                   <div key={b.id} className="mb-4">
-                    <div className="font-bold text-sm mb-1.5">{b.name}</div>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <div className="font-bold text-sm">{b.name}</div>
+                      {latestSessionId && (
+                        isHome ? (
+                          <button onClick={unpinHome} className="text-[11px] font-bold text-[#35D07F] flex-shrink-0">
+                            🏠 Home — unpin
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => pinAsHome(b.id, b.name, latestSessionId, "organizer")}
+                            className="text-[11px] font-bold text-gray-400 flex-shrink-0"
+                          >
+                            📌 Set as home
+                          </button>
+                        )
+                      )}
+                    </div>
                     {b.sessions.length === 0 ? (
                       <p className="text-xs text-gray-500 pl-2">No sessions yet.</p>
                     ) : (
@@ -291,7 +328,8 @@ export default function DashboardPage() {
                       ))
                     )}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -304,9 +342,28 @@ export default function DashboardPage() {
                   None yet — use an invite link from a band to join one.
                 </p>
               ) : (
-                memberBands.map((b) => (
+                memberBands.map((b) => {
+                  const isHome = homeShortcut?.label === b.name && homeShortcut?.href.includes("/respond");
+                  const latestSessionId = b.sessions[0]?.id;
+                  return (
                   <div key={b.id} className="mb-4">
-                    <div className="font-bold text-sm mb-1.5">{b.name}</div>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <div className="font-bold text-sm">{b.name}</div>
+                      {latestSessionId && (
+                        isHome ? (
+                          <button onClick={unpinHome} className="text-[11px] font-bold text-[#35D07F] flex-shrink-0">
+                            🏠 Home — unpin
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => pinAsHome(b.id, b.name, latestSessionId, "respond")}
+                            className="text-[11px] font-bold text-gray-400 flex-shrink-0"
+                          >
+                            📌 Set as home
+                          </button>
+                        )
+                      )}
+                    </div>
                     {b.sessions.length === 0 ? (
                       <p className="text-xs text-gray-500 pl-2">No sessions yet.</p>
                     ) : (
@@ -325,7 +382,8 @@ export default function DashboardPage() {
                       ))
                     )}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </>
