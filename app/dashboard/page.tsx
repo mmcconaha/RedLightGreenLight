@@ -25,6 +25,8 @@ export default function DashboardPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [magicLinkStatus, setMagicLinkStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [magicLinkError, setMagicLinkError] = useState("");
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotMsg, setForgotMsg] = useState("");
@@ -93,6 +95,17 @@ export default function DashboardPage() {
       setChecking(false);
     };
     init();
+
+    // Catches a magic link that finishes signing in just after this page has
+    // already mounted (Supabase reads the token out of the URL asynchronously).
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        setUserId(session.user.id);
+        setCurrentEmail(session.user.email ?? "");
+        loadDashboard(session.user.id);
+      }
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   const login = async () => {
@@ -105,6 +118,25 @@ export default function DashboardPage() {
     setUserId(data.user.id);
     setCurrentEmail(data.user.email ?? "");
     await loadDashboard(data.user.id);
+  };
+
+  const sendMagicLink = async () => {
+    setMagicLinkError("");
+    if (!email) {
+      setMagicLinkError("Enter your email first.");
+      return;
+    }
+    setMagicLinkStatus("sending");
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${window.location.origin}/dashboard` },
+    });
+    if (error) {
+      setMagicLinkStatus("error");
+      setMagicLinkError(error.message);
+    } else {
+      setMagicLinkStatus("sent");
+    }
   };
 
   const sendPasswordReset = async () => {
@@ -197,6 +229,28 @@ export default function DashboardPage() {
             >
               Log in
             </button>
+
+            <div className="flex items-center gap-2 my-4">
+              <div className="flex-1 h-px bg-[#2C2F38]" />
+              <span className="text-[11px] text-gray-500 font-bold">OR</span>
+              <div className="flex-1 h-px bg-[#2C2F38]" />
+            </div>
+
+            {magicLinkStatus === "sent" ? (
+              <p className="text-xs text-[#35D07F] text-center mb-3">
+                Check your email — click the link to log in, no password needed.
+              </p>
+            ) : (
+              <button
+                onClick={sendMagicLink}
+                disabled={magicLinkStatus === "sending"}
+                className="w-full py-3 rounded-xl font-bold text-[15px]"
+                style={{ background: "#1C1E24", color: "#F2F1EA", border: "1px solid #2C2F38" }}
+              >
+                {magicLinkStatus === "sending" ? "Sending…" : "✉️ Email me a login link"}
+              </button>
+            )}
+            {magicLinkError && <p className="text-[#FF5A5F] text-xs mt-2">{magicLinkError}</p>}
 
             <button
               onClick={() => setShowForgotPassword(!showForgotPassword)}

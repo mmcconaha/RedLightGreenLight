@@ -15,6 +15,8 @@ export default function RespondPage({ params }: { params: { id: string } }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [magicLinkStatus, setMagicLinkStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [magicLinkError, setMagicLinkError] = useState("");
   const [memberId, setMemberId] = useState<string | null>(null);
   const [memberName, setMemberName] = useState("");
   const [isOwner, setIsOwner] = useState(false);
@@ -74,6 +76,41 @@ export default function RespondPage({ params }: { params: { id: string } }) {
     }
   };
 
+  const authenticateMember = async (uid: string) => {
+    // Re-fetches this session's own date range rather than trusting outer
+    // component state -- keeps this safe to call from the magic-link
+    // listener below, which can fire well after the initial load.
+    const { data: sessionRow } = await supabase
+      .from("sessions")
+      .select("band_id, start_date, end_date, active_weekdays")
+      .eq("id", params.id)
+      .single();
+    if (!sessionRow?.start_date || !sessionRow?.end_date) return;
+    const activeWeekdays: number[] = sessionRow.active_weekdays ?? [0, 1, 2, 3, 4, 5, 6];
+    const d = dateRangeFiltered(sessionRow.start_date, sessionRow.end_date, activeWeekdays);
+
+    const { data: member } = await supabase
+      .from("members")
+      .select("id, name")
+      .eq("user_id", uid)
+      .single();
+    if (!member) return;
+    setMemberId(member.id);
+    setMemberName(member.name);
+    await loadExisting(member.id, d);
+    await loadNotes(member.id, d);
+    await checkAppleStatus(member.id);
+
+    if (sessionRow.band_id) {
+      const { data: band } = await supabase
+        .from("bands")
+        .select("owner_id")
+        .eq("id", sessionRow.band_id)
+        .single();
+      setIsOwner(band?.owner_id === uid);
+    }
+  };
+
   useEffect(() => {
     const load = async () => {
       const { data: session, error: sessionError } = await supabase
@@ -110,27 +147,7 @@ export default function RespondPage({ params }: { params: { id: string } }) {
 
       const { data } = await supabase.auth.getSession();
       if (data.session) {
-        const { data: member } = await supabase
-          .from("members")
-          .select("id, name")
-          .eq("user_id", data.session.user.id)
-          .single();
-        if (member) {
-          setMemberId(member.id);
-          setMemberName(member.name);
-          await loadExisting(member.id, d);
-          await loadNotes(member.id, d);
-          await checkAppleStatus(member.id);
-        }
-
-        if (session.band_id) {
-          const { data: band } = await supabase
-            .from("bands")
-            .select("owner_id")
-            .eq("id", session.band_id)
-            .single();
-          setIsOwner(band?.owner_id === data.session.user.id);
-        }
+        await authenticateMember(data.session.user.id);
       }
 
       const params2 = new URLSearchParams(window.location.search);
@@ -157,7 +174,33 @@ export default function RespondPage({ params }: { params: { id: string } }) {
       setCheckingSession(false);
     };
     load();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        authenticateMember(session.user.id);
+      }
+    });
+    return () => sub.subscription.unsubscribe();
   }, [params.id]);
+
+  const sendMagicLink = async () => {
+    setMagicLinkError("");
+    if (!email) {
+      setMagicLinkError("Enter your email first.");
+      return;
+    }
+    setMagicLinkStatus("sending");
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.href.split("?")[0] },
+    });
+    if (error) {
+      setMagicLinkStatus("error");
+      setMagicLinkError(error.message);
+    } else {
+      setMagicLinkStatus("sent");
+    }
+  };
 
   const login = async () => {
     setLoginError("");
@@ -401,6 +444,28 @@ export default function RespondPage({ params }: { params: { id: string } }) {
             >
               Log in
             </button>
+
+            <div className="flex items-center gap-2 my-4">
+              <div className="flex-1 h-px bg-[#2C2F38]" />
+              <span className="text-[11px] text-gray-500 font-bold">OR</span>
+              <div className="flex-1 h-px bg-[#2C2F38]" />
+            </div>
+
+            {magicLinkStatus === "sent" ? (
+              <p className="text-xs text-[#35D07F] text-center mb-3">
+                Check your email — click the link to log in, no password needed.
+              </p>
+            ) : (
+              <button
+                onClick={sendMagicLink}
+                disabled={magicLinkStatus === "sending"}
+                className="w-full py-3 rounded-xl font-bold text-[15px]"
+                style={{ background: "#1C1E24", color: "#F2F1EA", border: "1px solid #2C2F38" }}
+              >
+                {magicLinkStatus === "sending" ? "Sending…" : "✉️ Email me a login link"}
+              </button>
+            )}
+            {magicLinkError && <p className="text-[#FF5A5F] text-xs mt-2">{magicLinkError}</p>}
           </div>
         ) : (
           <>

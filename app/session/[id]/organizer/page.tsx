@@ -31,6 +31,8 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [magicLinkStatus, setMagicLinkStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [magicLinkError, setMagicLinkError] = useState("");
   const [ownerName, setOwnerName] = useState("Organizer");
   const [bandId, setBandId] = useState<string | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
@@ -175,43 +177,7 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
     setLoading(false);
   };
 
-  useEffect(() => {
-    const init = async () => {
-      const { data: session } = await supabase
-        .from("sessions")
-        .select("band_id")
-        .eq("id", params.id)
-        .single();
-
-      if (!session?.band_id) {
-        setAuthError("This session doesn't exist.");
-        setCheckingAuth(false);
-        return;
-      }
-
-      const { data: authData } = await supabase.auth.getSession();
-      if (authData.session) {
-        const owns = await checkOwnership(authData.session.user.id, session.band_id);
-        if (owns) {
-          setAuthorized(true);
-          setBandId(session.band_id);
-          await loadSessionData(session.band_id, authData.session.user.id);
-        } else {
-          setAuthError("You're not the organizer for this band's sessions.");
-        }
-      }
-      setCheckingAuth(false);
-    };
-    init();
-  }, [params.id]);
-
-  const login = async () => {
-    setLoginError("");
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error || !data.user) {
-      setLoginError("Couldn't log in — check your email/password.");
-      return;
-    }
+  const authenticateAsOwner = async (uid: string) => {
     const { data: session } = await supabase
       .from("sessions")
       .select("band_id")
@@ -221,7 +187,7 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
       setAuthError("This session doesn't exist.");
       return;
     }
-    const owns = await checkOwnership(data.user.id, session.band_id);
+    const owns = await checkOwnership(uid, session.band_id);
     if (!owns) {
       setAuthError("You're not the organizer for this band's sessions.");
       return;
@@ -229,7 +195,56 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
     setAuthorized(true);
     setBandId(session.band_id);
     setLoading(true);
-    await loadSessionData(session.band_id, data.user.id);
+    await loadSessionData(session.band_id, uid);
+  };
+
+  useEffect(() => {
+    const init = async () => {
+      const { data: authData } = await supabase.auth.getSession();
+      if (authData.session) {
+        await authenticateAsOwner(authData.session.user.id);
+      }
+      setCheckingAuth(false);
+    };
+    init();
+
+    // Catches a magic link that finishes signing in just after this page has
+    // already mounted.
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        authenticateAsOwner(session.user.id);
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, [params.id]);
+
+  const login = async () => {
+    setLoginError("");
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data.user) {
+      setLoginError("Couldn't log in — check your email/password.");
+      return;
+    }
+    await authenticateAsOwner(data.user.id);
+  };
+
+  const sendMagicLink = async () => {
+    setMagicLinkError("");
+    if (!email) {
+      setMagicLinkError("Enter your email first.");
+      return;
+    }
+    setMagicLinkStatus("sending");
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.href.split("?")[0] },
+    });
+    if (error) {
+      setMagicLinkStatus("error");
+      setMagicLinkError(error.message);
+    } else {
+      setMagicLinkStatus("sent");
+    }
   };
 
   const confirmSession = async () => {
@@ -361,6 +376,28 @@ export default function OrganizerPage({ params }: { params: { id: string } }) {
             >
               Log in
             </button>
+
+            <div className="flex items-center gap-2 my-4">
+              <div className="flex-1 h-px bg-[#2C2F38]" />
+              <span className="text-[11px] text-gray-500 font-bold">OR</span>
+              <div className="flex-1 h-px bg-[#2C2F38]" />
+            </div>
+
+            {magicLinkStatus === "sent" ? (
+              <p className="text-xs text-[#35D07F] text-center mb-3">
+                Check your email — click the link to log in, no password needed.
+              </p>
+            ) : (
+              <button
+                onClick={sendMagicLink}
+                disabled={magicLinkStatus === "sending"}
+                className="w-full py-3 rounded-xl font-bold text-[15px]"
+                style={{ background: "#1C1E24", color: "#F2F1EA", border: "1px solid #2C2F38" }}
+              >
+                {magicLinkStatus === "sending" ? "Sending…" : "✉️ Email me a login link"}
+              </button>
+            )}
+            {magicLinkError && <p className="text-[#FF5A5F] text-xs mt-2">{magicLinkError}</p>}
           </div>
         ) : loadError ? (
           <p className="text-[#FF5A5F] text-sm">{loadError}</p>
