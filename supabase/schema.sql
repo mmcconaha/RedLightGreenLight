@@ -1,5 +1,20 @@
 -- Red Light Green Light — schema
--- Run in the Supabase SQL editor for a fresh project.
+-- HISTORICAL / BOOTSTRAP ONLY. This is the very first schema this project
+-- ever ran, kept for reference -- it does NOT match the live database
+-- anymore. `sessions` and `availability` were both altered directly in the
+-- Supabase dashboard since (sessions now has jsonb `blocks`, `active_weekdays`,
+-- `confirmed_*` columns; availability gained a `note` column; there's no
+-- `guests`/guest_id concept in the live app at all). Do NOT re-run this file
+-- against the live project.
+--
+-- The `guests` table below was created here but never had Row Level
+-- Security turned on, and Supabase's automated security advisor flagged it
+-- as publicly readable/writable/deletable by anyone (2026-09-02). It was
+-- unused by the app (grepped the whole codebase, zero references) and was
+-- dropped from the live database with `drop table if exists guests;`. If
+-- you're ever setting up a truly fresh project from scratch, skip the
+-- `guests` table and its `alter table ... enable row level security` step
+-- entirely, and enable RLS on every table you do create.
 
 create extension if not exists "uuid-ossp";
 
