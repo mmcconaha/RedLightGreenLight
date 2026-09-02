@@ -200,7 +200,7 @@ export default function DashboardPage() {
           <div className="w-2.5 h-2.5 rounded-full bg-[#FFC24B]" />
           <div className="w-2.5 h-2.5 rounded-full bg-[#35D07F]" />
         </div>
-        <h1 className="text-2xl font-black uppercase tracking-tight mb-6">
+        <h1 className="text-2xl font-black uppercase tracking-tight mb-6 break-all">
           {name ? `Welcome, ${name}` : currentEmail ? `Welcome, ${currentEmail}` : "Dashboard"}
         </h1>
 
@@ -283,23 +283,7 @@ export default function DashboardPage() {
           <>
             <AppNav current="dashboard" />
 
-            <a
-              href="/create"
-              className="block w-full text-center py-2.5 rounded-lg text-sm font-bold mb-3"
-              style={{ background: "#35D07F", color: "#0E1712" }}
-            >
-              + New session
-            </a>
-
-            <a
-              href="/my-calendar"
-              className="block w-full text-center py-2.5 rounded-lg text-sm font-bold mb-5"
-              style={{ background: "#1C1E24", color: "#F2F1EA", border: "1px solid #2C2F38" }}
-            >
-              🗓️ My Calendar
-            </a>
-
-            <div className="bg-[#1C1E24] border border-[#2C2F38] rounded-xl p-3.5 mb-7">
+            <div className="bg-[#1C1E24] border border-[#2C2F38] rounded-xl p-3.5 mb-7 mt-4">
               <div className="flex justify-between items-center mb-2">
                 <div className="text-xs text-gray-400">
                   Logged in as <span className="text-gray-200 font-bold">{currentEmail}</span>
