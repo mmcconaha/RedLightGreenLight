@@ -30,6 +30,7 @@ export default function CreatePage() {
   const [bandId, setBandId] = useState<string | null>(null);
   const [newBandName, setNewBandName] = useState("");
   const [creatingBand, setCreatingBand] = useState(false);
+  const [showNewBandForm, setShowNewBandForm] = useState(false);
 
   const [title, setTitle] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -214,7 +215,10 @@ export default function CreatePage() {
           <div className="w-2.5 h-2.5 rounded-full bg-[#FFC24B]" />
           <div className="w-2.5 h-2.5 rounded-full bg-[#35D07F]" />
         </div>
-        <h1 className="text-2xl font-black uppercase tracking-tight mb-6">New Session</h1>
+        <h1 className="text-2xl font-black uppercase tracking-tight mb-1">New Session</h1>
+        <p className="text-xs text-gray-500 mb-5">
+          Starts a new round of availability-gathering for a band you lead.
+        </p>
 
         <AppNav current="create" />
 
@@ -375,22 +379,46 @@ export default function CreatePage() {
                   ))}
                 </div>
               )}
-              <div className="flex gap-2">
-                <input
-                  value={newBandName}
-                  onChange={(e) => setNewBandName(e.target.value)}
-                  placeholder="New band name"
-                  className="flex-1 box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm outline-none"
-                />
-                <button
-                  onClick={createBand}
-                  disabled={creatingBand || !newBandName.trim()}
-                  className="px-3 py-2 rounded-lg text-sm font-bold"
-                  style={{ background: "#35D07F", color: "#0E1712" }}
-                >
-                  + Add
-                </button>
-              </div>
+
+              {bands.length === 0 && !showNewBandForm ? (
+                <div className="bg-[#1C1E24] border border-[#2C2F38] rounded-lg p-3.5">
+                  <p className="text-sm text-gray-300 mb-2">
+                    You're not currently leading any band, so there's nothing to start a session for
+                    here.
+                  </p>
+                  <p className="text-xs text-gray-500 mb-3">
+                    If someone invited you to a band, you're already set — you don't need this page at
+                    all. Check your{" "}
+                    <a href="/dashboard" className="underline" style={{ color: "#35D07F" }}>
+                      Dashboard
+                    </a>{" "}
+                    for sessions waiting on you.
+                  </p>
+                  <button
+                    onClick={() => setShowNewBandForm(true)}
+                    className="text-xs font-bold underline text-gray-400"
+                  >
+                    Actually, I want to start leading a new band
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={newBandName}
+                    onChange={(e) => setNewBandName(e.target.value)}
+                    placeholder="New band name"
+                    className="flex-1 box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2 text-sm outline-none"
+                  />
+                  <button
+                    onClick={createBand}
+                    disabled={creatingBand || !newBandName.trim()}
+                    className="px-3 py-2 rounded-lg text-sm font-bold"
+                    style={{ background: "#35D07F", color: "#0E1712" }}
+                  >
+                    + Add
+                  </button>
+                </div>
+              )}
             </div>
 
             {bandId && (
