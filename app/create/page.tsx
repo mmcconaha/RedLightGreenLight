@@ -202,7 +202,10 @@ export default function CreatePage() {
     setAddingSelf(true);
     const { error } = await supabase
       .from("members")
-      .insert({ band_id: createdBandId, name: selfName.trim(), user_id: userId });
+      .upsert(
+        { band_id: createdBandId, name: selfName.trim(), user_id: userId },
+        { onConflict: "band_id,user_id" }
+      );
     setAddingSelf(false);
     if (!error) setIsMemberOfBand(true);
   };

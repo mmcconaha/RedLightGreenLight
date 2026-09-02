@@ -131,7 +131,10 @@ export default function RespondPage({ params }: { params: { id: string } }) {
     setAddingSelf(true);
     const { error } = await supabase
       .from("members")
-      .insert({ band_id: bandId, name: selfName.trim(), user_id: authedUserId });
+      .upsert(
+        { band_id: bandId, name: selfName.trim(), user_id: authedUserId },
+        { onConflict: "band_id,user_id" }
+      );
     setAddingSelf(false);
     if (error) {
       setLoginError("Couldn't add you as a member -- try again.");
