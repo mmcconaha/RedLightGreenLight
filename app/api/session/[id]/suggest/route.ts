@@ -3,6 +3,18 @@ import { supabase } from "@/lib/supabase";
 import { topSuggestions, plainLine } from "@/lib/scoring";
 import { CellCounts } from "@/lib/types";
 
+// Found 2026-09-02: this route's supabase.rpc() call goes through the
+// global fetch(), which Next.js's App Router caches indefinitely by
+// default for GET route handlers -- there's no revalidation trigger, so
+// once cached it can silently serve availability counts from whenever it
+// was first hit, no matter how much real data changes after that. This is
+// the ONLY path the organizer's merged "group view" heatmap reads
+// aggregate data through, so a stale cache here means the whole group
+// calendar looks frozen. Force it dynamic so every request hits Supabase
+// live.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // GET /api/session/[id]/suggest
 // Reads only the aggregate counts (via the session_summary SQL function —
 // see supabase/schema.sql) and ranks windows. The Claude call only writes
