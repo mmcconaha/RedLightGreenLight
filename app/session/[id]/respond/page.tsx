@@ -20,6 +20,11 @@ export default function RespondPage({ params }: { params: { id: string } }) {
   const [memberId, setMemberId] = useState<string | null>(null);
   const [memberName, setMemberName] = useState("");
   const [isOwner, setIsOwner] = useState(false);
+  const [bandId, setBandId] = useState<string | null>(null);
+  const [authedUserId, setAuthedUserId] = useState<string | null>(null);
+  const [needsMemberSetup, setNeedsMemberSetup] = useState(false);
+  const [selfName, setSelfName] = useState("");
+  const [addingSelf, setAddingSelf] = useState(false);
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -88,13 +93,23 @@ export default function RespondPage({ params }: { params: { id: string } }) {
     if (!sessionRow?.start_date || !sessionRow?.end_date) return;
     const activeWeekdays: number[] = sessionRow.active_weekdays ?? [0, 1, 2, 3, 4, 5, 6];
     const d = dateRangeFiltered(sessionRow.start_date, sessionRow.end_date, activeWeekdays);
+    setBandId(sessionRow.band_id ?? null);
 
+    // Scoped by band, not just user_id -- someone can be a member of more
+    // than one band, and an unscoped lookup could silently attach the wrong
+    // band's member row to this session.
     const { data: member } = await supabase
       .from("members")
       .select("id, name")
       .eq("user_id", uid)
-      .single();
-    if (!member) return;
+      .eq("band_id", sessionRow.band_id)
+      .maybeSingle();
+    if (!member) {
+      setAuthedUserId(uid);
+      setNeedsMemberSetup(true);
+      return;
+    }
+    setNeedsMemberSetup(false);
     setMemberId(member.id);
     setMemberName(member.name);
     await loadExisting(member.id, d);
@@ -109,6 +124,21 @@ export default function RespondPage({ params }: { params: { id: string } }) {
         .single();
       setIsOwner(band?.owner_id === uid);
     }
+  };
+
+  const addSelfAsMember = async () => {
+    if (!selfName.trim() || !authedUserId || !bandId) return;
+    setAddingSelf(true);
+    const { error } = await supabase
+      .from("members")
+      .insert({ band_id: bandId, name: selfName.trim(), user_id: authedUserId });
+    setAddingSelf(false);
+    if (error) {
+      setLoginError("Couldn't add you as a member -- try again.");
+      return;
+    }
+    setNeedsMemberSetup(false);
+    await authenticateMember(authedUserId);
   };
 
   useEffect(() => {
@@ -209,34 +239,7 @@ export default function RespondPage({ params }: { params: { id: string } }) {
       setLoginError("Couldn't log in — check your email/password, or ask whoever set this up.");
       return;
     }
-    const { data: member } = await supabase
-      .from("members")
-      .select("id, name")
-      .eq("user_id", data.user.id)
-      .single();
-    if (!member) {
-      setLoginError("Logged in, but no member profile found for this band yet.");
-      return;
-    }
-    setMemberId(member.id);
-    setMemberName(member.name);
-    await loadExisting(member.id, dates);
-    await loadNotes(member.id, dates);
-    await checkAppleStatus(member.id);
-
-    const { data: sessionRow } = await supabase
-      .from("sessions")
-      .select("band_id")
-      .eq("id", params.id)
-      .single();
-    if (sessionRow?.band_id) {
-      const { data: band } = await supabase
-        .from("bands")
-        .select("owner_id")
-        .eq("id", sessionRow.band_id)
-        .single();
-      setIsOwner(band?.owner_id === data.user.id);
-    }
+    await authenticateMember(data.user.id);
   };
 
   const checkAppleStatus = async (memberIdArg: string) => {
@@ -421,6 +424,30 @@ export default function RespondPage({ params }: { params: { id: string } }) {
           <p className="text-[#FF5A5F] text-sm">{loadError}</p>
         ) : checkingSession ? (
           <p className="text-sm text-gray-400">Loading…</p>
+        ) : !memberId && needsMemberSetup ? (
+          <div>
+            <p className="text-sm text-gray-300 mb-1">You're logged in, but not set up as a member of this band yet.</p>
+            <p className="text-xs text-gray-500 mb-3">
+              Just need your name and you're in — this only takes a second.
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={selfName}
+                onChange={(e) => setSelfName(e.target.value)}
+                placeholder="Your name"
+                className="flex-1 box-border bg-[#1C1E24] border border-[#2C2F38] rounded-lg px-3 py-2.5 text-[15px] outline-none"
+              />
+              <button
+                onClick={addSelfAsMember}
+                disabled={addingSelf || !selfName.trim()}
+                className="px-4 py-2.5 rounded-lg text-sm font-bold"
+                style={{ background: "#35D07F", color: "#0E1712" }}
+              >
+                {addingSelf ? "Adding…" : "Add myself"}
+              </button>
+            </div>
+            {loginError && <p className="text-[#FF5A5F] text-xs mt-3">{loginError}</p>}
+          </div>
         ) : !memberId ? (
           <div>
             <input
